@@ -1,0 +1,2041 @@
+# Echo-smith P0 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the echo-smith Skill that auto-detects learning moments in Claude Code sessions and generates SFT training data + CLAUDE.md reminders via background subagents.
+
+**Architecture:** A Claude Code skill (`~/.claude/skills/echo-smith/SKILL.md`) auto-triggers when the model detects trial-and-error or user corrections. It dispatches a background subagent with a curated context snapshot. The subagent analyzes the episode, generates Insight + SFT Sample + optional Reminder, and writes structured JSON to `~/.echo-smith/data/`. The main conversation is never blocked or polluted.
+
+**Tech Stack:** Pure Markdown skill (SKILL.md + prompt templates). JSON file storage. Python CLI for validation/export (minimal, Phase 2-ready). Shell script installer.
+
+**Priority context:** This is P0 — the core value chain. No central server, no advanced quality pipelines, no web UI. Focus: generate useful data from real interactions.
+
+---
+
+## Scope
+
+**In scope (P0):**
+- SKILL.md with auto-trigger description
+- Subagent prompt templates (sidecar, retrospective, correction)
+- Output schema definition
+- Local file storage structure (`~/.echo-smith/data/`)
+- install.sh for one-command setup
+- Config file (`config.yaml`)
+- Basic Python data models (Pydantic) for schema validation
+- A simple `echo-smith` CLI: `stats`, `list`, `show`, `export --format sft|dpo|jsonl`
+
+**Deferred (P1 — central server):**
+- Server ingest API, analysis pipeline, dashboard
+
+**Deferred (P2/P3 — advanced quality):**
+- Strong model re-evaluation
+- Cross-model voting
+- User credibility scoring
+- Curriculum learning ordering
+- PRM-assisted filtering
+- Bootstrapped synthetic data
+
+---
+
+## File Structure
+
+```
+echo-smith/
+├── skills/
+│   └── echo-smith/
+│       ├── SKILL.md                    # Main skill definition (auto-trigger + dispatch logic)
+│       ├── sidecar-prompt.md           # Subagent prompt: mid-task sidecar reflection
+│       ├── retrospective-prompt.md     # Subagent prompt: post-task full review
+│       ├── correction-prompt.md        # Subagent prompt: fix wrong historical insight
+│       └── output-schema.md            # JSON schema reference for subagent outputs
+├── cli/
+│   ├── pyproject.toml                  # Python package definition
+│   └── echo_smith/
+│       ├── __init__.py
+│       ├── cli.py                      # click CLI entry point
+│       ├── models.py                   # Pydantic data models (Trace, Insight, SFT Sample, etc.)
+│       ├── store.py                    # Read/write/index ~/.echo-smith/data/
+│       └── export.py                   # Multi-format export (SFT, DPO, JSONL)
+├── install.sh                          # One-command installer
+├── tests/
+│   ├── test_models.py                  # Schema validation tests
+│   ├── test_store.py                   # Storage read/write tests
+│   ├── test_export.py                  # Export format tests
+│   └── fixtures/                       # Sample JSON data for tests
+│       ├── sample_insight.json
+│       ├── sample_sft.json
+│       ├── sample_trace.json
+│       ├── sample_reminder.json
+│       └── sample_correction.json
+├── docs/
+│   ├── brainstorming-log.md            # (already exists)
+│   └── superpowers/
+│       ├── specs/
+│       │   └── 2026-04-10-echo-smith-design.md  # (already exists)
+│       └── plans/
+│           └── 2026-04-10-echo-smith-p0.md      # (this file)
+└── README.md
+```
+
+---
+
+## Task 1: Project Scaffolding and Data Models
+
+**Files:**
+- Create: `cli/pyproject.toml`
+- Create: `cli/echo_smith/__init__.py`
+- Create: `cli/echo_smith/models.py`
+- Create: `tests/test_models.py`
+- Create: `tests/fixtures/sample_insight.json`
+- Create: `tests/fixtures/sample_sft.json`
+- Create: `tests/fixtures/sample_trace.json`
+- Create: `tests/fixtures/sample_reminder.json`
+- Create: `tests/fixtures/sample_correction.json`
+
+This is the foundation everything else depends on. Data models define the contract between the Skill (producer) and CLI (consumer).
+
+- [ ] **Step 1: Create pyproject.toml**
+
+```toml
+# cli/pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "echo-smith"
+version = "0.1.0"
+description = "Extract learning experiences from AI coding interactions"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+echo-smith = "echo_smith.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+```
+
+- [ ] **Step 2: Create __init__.py**
+
+```python
+# cli/echo_smith/__init__.py
+"""Echo-smith: Extract learning experiences from AI coding interactions."""
+```
+
+- [ ] **Step 3: Write failing tests for data models**
+
+```python
+# tests/test_models.py
+import json
+from pathlib import Path
+from echo_smith.models import (
+    Trace,
+    Insight,
+    SFTSample,
+    Reminder,
+    Correction,
+    generate_id,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_generate_id_format():
+    """IDs follow {type}-{YYYYMMDD}-{random6} format."""
+    id_ = generate_id("ins")
+    parts = id_.split("-")
+    assert parts[0] == "ins"
+    assert len(parts[1]) == 8  # YYYYMMDD
+    assert parts[1].isdigit()
+    assert len(parts[2]) == 6  # random hex
+
+
+def test_generate_id_uniqueness():
+    """Two calls produce different IDs."""
+    a = generate_id("sft")
+    b = generate_id("sft")
+    assert a != b
+
+
+def test_trace_from_fixture():
+    """Trace model validates fixture JSON."""
+    data = json.loads((FIXTURES / "sample_trace.json").read_text())
+    trace = Trace.model_validate(data)
+    assert trace.id.startswith("trace-")
+    assert trace.source == "claude-code"
+    assert trace.task_outcome in ("success", "partial", "failed")
+    assert len(trace.episodes) >= 1
+
+
+def test_insight_from_fixture():
+    """Insight model validates fixture JSON."""
+    data = json.loads((FIXTURES / "sample_insight.json").read_text())
+    insight = Insight.model_validate(data)
+    assert insight.id.startswith("ins-")
+    assert insight.insight_type in (
+        "skill_gap", "knowledge_gap", "reasoning_error",
+        "exploration_inefficiency", "tool_orchestration",
+        "backtrack_failure", "preference_probe", "env_specific",
+    )
+    assert insight.status == "active"
+    assert insight.adversarial_reflection is not None
+    assert insight.generalization_ladder is not None
+    assert insight.generalization_ladder.selected_level in ("L1", "L2", "L3")
+
+
+def test_sft_sample_from_fixture():
+    """SFT sample model validates fixture JSON."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sample = SFTSample.model_validate(data)
+    assert sample.id.startswith("sft-")
+    assert sample.version in ("concrete", "abstract")
+    assert sample.sft_type in (
+        "user_prompt_internalization", "exploration_compression",
+        "error_correction", "preference_to_inquiry",
+        "backtrack_decision", "tool_orchestration",
+    )
+    assert len(sample.query.conversation_history) >= 1
+    assert len(sample.cot) > 0
+    assert len(sample.response) > 0
+
+
+def test_reminder_from_fixture():
+    """Reminder model validates fixture JSON."""
+    data = json.loads((FIXTURES / "sample_reminder.json").read_text())
+    reminder = Reminder.model_validate(data)
+    assert reminder.id.startswith("rem-")
+    assert reminder.status in ("pending_approval", "active", "invalidated", "expired")
+    assert reminder.lifecycle is not None
+    assert reminder.scope in ("global", "project", "personal")
+
+
+def test_correction_from_fixture():
+    """Correction model validates fixture JSON."""
+    data = json.loads((FIXTURES / "sample_correction.json").read_text())
+    correction = Correction.model_validate(data)
+    assert correction.id.startswith("cor-")
+    assert correction.action in ("invalidate", "supersede", "amend")
+    assert correction.target_type in ("insight", "sample", "reminder")
+
+
+def test_sft_sample_query_has_tool_interactions():
+    """SFT query must contain tool interactions (real agentic distribution)."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sample = SFTSample.model_validate(data)
+    roles = [msg.role for msg in sample.query.conversation_history]
+    assert "tool" in roles, "SFT query must include tool interactions"
+
+
+def test_insight_adversarial_confidence_range():
+    """Adversarial reflection confidences must be 0-1."""
+    data = json.loads((FIXTURES / "sample_insight.json").read_text())
+    insight = Insight.model_validate(data)
+    ar = insight.adversarial_reflection
+    assert 0.0 <= ar.attribution_a.confidence <= 1.0
+    assert 0.0 <= ar.attribution_b.confidence <= 1.0
+```
+
+- [ ] **Step 4: Run tests to verify they fail**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/test_models.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'echo_smith'`
+
+- [ ] **Step 5: Create fixture files**
+
+```json
+// tests/fixtures/sample_trace.json
+{
+  "id": "trace-20260410-a1b2c3",
+  "created_at": "2026-04-10T14:30:00Z",
+  "source": "claude-code",
+  "model": "claude-sonnet-4-6",
+  "trigger": "auto",
+  "task_description": "Implement JWT auth middleware for microservice",
+  "task_outcome": "success",
+  "project_context": {
+    "language": "typescript",
+    "framework": "express",
+    "repo": "internal/auth-service"
+  },
+  "episodes": ["ep-20260410-x1y2z3"],
+  "conversation_snapshot": {
+    "segments": [
+      {
+        "role": "assistant",
+        "summary": "Attempted express-jwt with wrong algorithm parameter"
+      },
+      {
+        "role": "tool",
+        "name": "Bash",
+        "summary": "npm test → 'algorithm HS256 not allowed'",
+        "is_key_signal": true
+      },
+      {
+        "role": "user",
+        "summary": "Pointed out RS256 is needed for microservices",
+        "is_correction": true
+      }
+    ]
+  }
+}
+```
+
+```json
+// tests/fixtures/sample_insight.json
+{
+  "id": "ins-20260410-d4e5f6",
+  "trace_id": "trace-20260410-a1b2c3",
+  "created_at": "2026-04-10T14:32:00Z",
+  "insight_type": "knowledge_gap",
+  "status": "active",
+  "root_cause": {
+    "concrete": "Did not know microservice JWT should use asymmetric algorithm (RS256)",
+    "abstract": "When choosing crypto algorithms, failed to consider deployment architecture security constraints"
+  },
+  "user_correction": {
+    "type": "genuine_improvement",
+    "description": "User pointed out microservices should not share symmetric keys"
+  },
+  "adversarial_reflection": {
+    "attribution_a": {
+      "argument": "RS256 is objectively better for multi-service architectures because it eliminates shared secret distribution",
+      "confidence": 0.88
+    },
+    "attribution_b": {
+      "argument": "HS256 could work if API gateway centralizes verification",
+      "confidence": 0.35
+    },
+    "verdict": "high_confidence"
+  },
+  "generalization_ladder": {
+    "L1": "In Express microservice JWT auth, use RS256 not HS256 when multiple services verify tokens",
+    "L2": "Microservice architectures require asymmetric JWT algorithms to avoid shared secret distribution",
+    "L3": "Deployment architecture constrains cryptographic algorithm choice",
+    "selected_level": "L1"
+  },
+  "efficiency_metrics": {
+    "actual_rounds": 10,
+    "optimal_rounds": 3,
+    "wasted_rounds": 7,
+    "t_optimal": 2,
+    "missed_signals": [
+      {
+        "round": 2,
+        "tool": "Read",
+        "signal": "line 42: algorithm: 'HS256'",
+        "why_missed": "Focused on function structure, did not cross-validate algorithm choice against architecture"
+      }
+    ]
+  },
+  "independent_value": true,
+  "value_rationale": "RS256 vs HS256 knowledge is valid regardless of task outcome",
+  "quality": {
+    "local_score": 0.82,
+    "server_score": null
+  }
+}
+```
+
+```json
+// tests/fixtures/sample_sft.json
+{
+  "id": "sft-20260410-g7h8i9",
+  "insight_id": "ins-20260410-d4e5f6",
+  "created_at": "2026-04-10T14:33:00Z",
+  "version": "concrete",
+  "sft_type": "exploration_compression",
+  "query": {
+    "system_context": "You are a coding assistant helping implement Express.js microservice JWT auth middleware.",
+    "conversation_history": [
+      {"role": "user", "content": "Help me fix auth failure — Service B cannot verify tokens"},
+      {"role": "assistant", "content": "Let me check the auth middleware."},
+      {"role": "tool", "name": "Read", "input": "src/auth/middleware.ts", "output": "// JWT middleware [trimmed: 200→15 lines]\n...line 42: algorithm: 'HS256'...\n...line 58: secret: process.env.JWT_SECRET..."},
+      {"role": "assistant", "content": "I see the middleware config. Let me check how Service B verifies."},
+      {"role": "tool", "name": "Grep", "input": "JWT_SECRET", "output": "src/config.ts:12: JWT_SECRET=process.env.JWT_SECRET\nsrc/service-b/auth.ts:5: const secret = process.env.JWT_SECRET"}
+    ],
+    "decision_point": "Read and Grep results are in. Model has seen HS256 on line 42 and shared secret pattern."
+  },
+  "cot": "Analyzing the tool results:\n1. middleware.ts line 42 uses HS256 (symmetric algorithm)\n2. Both services read JWT_SECRET from env — they share the same secret\n3. This is a microservice architecture where Service B independently verifies tokens\n4. Key reasoning: shared symmetric secrets across services is a security risk\n5. The 'algorithm not allowed' error likely means Service B is configured to reject HS256\n6. Root fix: migrate to RS256 (asymmetric)\n7. Before implementing, check Service B's algorithm whitelist to confirm",
+  "response": "The issue is architectural. HS256 requires all services to share a secret, which is a security risk in microservices. Service B likely rejects HS256 by policy. Let me check its algorithm config and then migrate to RS256...",
+  "quality": {
+    "local_score": 0.82,
+    "server_score": null,
+    "evidence_anchored": true,
+    "no_post_hoc_rationalization": true,
+    "no_content_free_hedging": true
+  },
+  "dpo_rejected_available": true
+}
+```
+
+```json
+// tests/fixtures/sample_reminder.json
+{
+  "id": "rem-20260410-j0k1l2",
+  "insight_id": "ins-20260410-d4e5f6",
+  "created_at": "2026-04-10T14:33:00Z",
+  "status": "pending_approval",
+  "rule": "When configuring JWT, first confirm deployment architecture. Microservices require asymmetric algorithms (RS256).",
+  "claude_md_text": "## [Echo-smith] JWT Algorithm Selection\nWhen implementing JWT auth, first ask or confirm the deployment architecture. Use RS256 (asymmetric) for microservices, HS256 (symmetric) is acceptable for monoliths.",
+  "lifecycle": {
+    "validation_count": 0,
+    "contradiction_count": 0,
+    "last_validated": null,
+    "confidence": 0.82,
+    "written_to_claude_md": false,
+    "user_approved": false
+  },
+  "scope": "global"
+}
+```
+
+```json
+// tests/fixtures/sample_correction.json
+{
+  "id": "cor-20260412-m3n4o5",
+  "created_at": "2026-04-12T10:00:00Z",
+  "target_type": "insight",
+  "target_id": "ins-20260410-d4e5f6",
+  "action": "supersede",
+  "reason": "Discovered the project uses API Gateway for centralized token verification, so HS256 is viable",
+  "new_insight_id": "ins-20260412-p6q7r8",
+  "lesson": {
+    "abstract": "JWT algorithm choice depends not just on architecture pattern but also on verification topology",
+    "generates_new_sample": true
+  }
+}
+```
+
+- [ ] **Step 6: Implement data models**
+
+```python
+# cli/echo_smith/models.py
+"""Pydantic data models for Echo-smith."""
+
+from __future__ import annotations
+
+import secrets
+from datetime import datetime, date
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+
+def generate_id(prefix: str) -> str:
+    """Generate ID in {prefix}-{YYYYMMDD}-{random6} format."""
+    today = date.today().strftime("%Y%m%d")
+    rand = secrets.token_hex(3)
+    return f"{prefix}-{today}-{rand}"
+
+
+# --- Enums ---
+
+class InsightType(str, Enum):
+    skill_gap = "skill_gap"
+    knowledge_gap = "knowledge_gap"
+    reasoning_error = "reasoning_error"
+    exploration_inefficiency = "exploration_inefficiency"
+    tool_orchestration = "tool_orchestration"
+    backtrack_failure = "backtrack_failure"
+    preference_probe = "preference_probe"
+    env_specific = "env_specific"
+
+
+class InsightStatus(str, Enum):
+    active = "active"
+    invalidated = "invalidated"
+    superseded = "superseded"
+    merged = "merged"
+
+
+class SFTType(str, Enum):
+    user_prompt_internalization = "user_prompt_internalization"
+    exploration_compression = "exploration_compression"
+    error_correction = "error_correction"
+    preference_to_inquiry = "preference_to_inquiry"
+    backtrack_decision = "backtrack_decision"
+    tool_orchestration = "tool_orchestration"
+
+
+class CorrectionAction(str, Enum):
+    invalidate = "invalidate"
+    supersede = "supersede"
+    amend = "amend"
+
+
+class ReminderStatus(str, Enum):
+    pending_approval = "pending_approval"
+    active = "active"
+    invalidated = "invalidated"
+    expired = "expired"
+
+
+class CorrectionType(str, Enum):
+    genuine_improvement = "genuine_improvement"
+    preference = "preference"
+    environmental = "environmental"
+
+
+class TaskOutcome(str, Enum):
+    success = "success"
+    partial = "partial"
+    failed = "failed"
+
+
+class TriggerMode(str, Enum):
+    auto = "auto"
+    manual = "manual"
+    retrospective = "retrospective"
+
+
+class GeneralizationLevel(str, Enum):
+    L1 = "L1"
+    L2 = "L2"
+    L3 = "L3"
+
+
+class ReminderScope(str, Enum):
+    global_ = "global"
+    project = "project"
+    personal = "personal"
+
+
+class AdversarialVerdict(str, Enum):
+    high_confidence = "high_confidence"
+    moderate = "moderate"
+    contested = "contested"
+
+
+# --- Sub-models ---
+
+class ProjectContext(BaseModel):
+    language: Optional[str] = None
+    framework: Optional[str] = None
+    repo: Optional[str] = None
+
+
+class ConversationSegment(BaseModel):
+    role: str
+    summary: str
+    name: Optional[str] = None
+    content_hash: Optional[str] = None
+    is_key_signal: Optional[bool] = None
+    is_correction: Optional[bool] = None
+
+
+class ConversationSnapshot(BaseModel):
+    segments: list[ConversationSegment]
+
+
+class RootCause(BaseModel):
+    concrete: str
+    abstract: str
+
+
+class UserCorrection(BaseModel):
+    type: CorrectionType
+    description: str
+
+
+class Attribution(BaseModel):
+    argument: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class AdversarialReflection(BaseModel):
+    attribution_a: Attribution
+    attribution_b: Attribution
+    verdict: AdversarialVerdict
+
+
+class GeneralizationLadder(BaseModel):
+    L1: str
+    L2: str
+    L3: str
+    selected_level: GeneralizationLevel
+
+
+class MissedSignal(BaseModel):
+    round: int
+    tool: str
+    signal: str
+    why_missed: str
+
+
+class EfficiencyMetrics(BaseModel):
+    actual_rounds: int
+    optimal_rounds: int
+    wasted_rounds: int
+    t_optimal: int
+    missed_signals: list[MissedSignal] = []
+
+
+class QualityScore(BaseModel):
+    local_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    server_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class SFTQualityScore(BaseModel):
+    local_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    server_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    evidence_anchored: Optional[bool] = None
+    no_post_hoc_rationalization: Optional[bool] = None
+    no_content_free_hedging: Optional[bool] = None
+
+
+class ConversationMessage(BaseModel):
+    role: str  # user | assistant | tool
+    content: Optional[str] = None
+    name: Optional[str] = None
+    input: Optional[str] = None
+    output: Optional[str] = None
+
+
+class SFTQuery(BaseModel):
+    system_context: str
+    conversation_history: list[ConversationMessage]
+    decision_point: Optional[str] = None
+
+
+class ReminderLifecycle(BaseModel):
+    validation_count: int = 0
+    contradiction_count: int = 0
+    last_validated: Optional[str] = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    written_to_claude_md: bool = False
+    user_approved: bool = False
+
+
+class CorrectionLesson(BaseModel):
+    abstract: str
+    generates_new_sample: bool = False
+
+
+# --- Top-level models ---
+
+class Trace(BaseModel):
+    id: str
+    created_at: str
+    source: str
+    model: str
+    trigger: TriggerMode
+    task_description: str
+    task_outcome: TaskOutcome
+    project_context: ProjectContext
+    episodes: list[str]
+    conversation_snapshot: ConversationSnapshot
+
+
+class Insight(BaseModel):
+    id: str
+    trace_id: str
+    created_at: str
+    insight_type: InsightType
+    status: InsightStatus
+    root_cause: RootCause
+    user_correction: Optional[UserCorrection] = None
+    adversarial_reflection: Optional[AdversarialReflection] = None
+    generalization_ladder: Optional[GeneralizationLadder] = None
+    efficiency_metrics: Optional[EfficiencyMetrics] = None
+    independent_value: bool = True
+    value_rationale: Optional[str] = None
+    quality: QualityScore = QualityScore()
+
+
+class SFTSample(BaseModel):
+    id: str
+    insight_id: str
+    created_at: str
+    version: str  # concrete | abstract
+    sft_type: SFTType
+    query: SFTQuery
+    cot: str
+    response: str
+    quality: SFTQualityScore = SFTQualityScore()
+    dpo_rejected_available: bool = False
+
+
+class Reminder(BaseModel):
+    id: str
+    insight_id: str
+    created_at: str
+    status: ReminderStatus
+    rule: str
+    claude_md_text: str
+    lifecycle: ReminderLifecycle
+    scope: ReminderScope
+
+
+class Correction(BaseModel):
+    id: str
+    created_at: str
+    target_type: str  # insight | sample | reminder
+    target_id: str
+    action: CorrectionAction
+    reason: str
+    new_insight_id: Optional[str] = None
+    lesson: Optional[CorrectionLesson] = None
+```
+
+- [ ] **Step 7: Install package in dev mode and run tests**
+
+Run: `cd /Users/lxs/code/echo-smith && pip install -e cli/ && python -m pytest tests/test_models.py -v`
+Expected: All 9 tests PASS
+
+- [ ] **Step 8: Commit**
+
+```bash
+git init
+git add cli/ tests/
+git commit -m "feat: add data models and schema validation tests
+
+Pydantic models for Trace, Insight, SFTSample, Reminder, Correction.
+Fixture files for each model type. 9 passing tests."
+```
+
+---
+
+## Task 2: Local File Store
+
+**Files:**
+- Create: `cli/echo_smith/store.py`
+- Create: `tests/test_store.py`
+
+The store reads/writes JSON files to `~/.echo-smith/data/` and maintains an `index.json` for fast queries.
+
+- [ ] **Step 1: Write failing tests for store**
+
+```python
+# tests/test_store.py
+import json
+from pathlib import Path
+
+from echo_smith.models import Insight, SFTSample, Reminder, Trace, Correction
+from echo_smith.store import EchoSmithStore
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_init_creates_directory_structure(tmp_path):
+    """Store.init() creates required subdirectories."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+    assert (tmp_path / "data" / "traces").is_dir()
+    assert (tmp_path / "data" / "insights").is_dir()
+    assert (tmp_path / "data" / "samples").is_dir()
+    assert (tmp_path / "data" / "reminders").is_dir()
+    assert (tmp_path / "data" / "corrections").is_dir()
+    assert (tmp_path / "index.json").exists()
+
+
+def test_save_and_load_insight(tmp_path):
+    """Can save an Insight and load it back."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+    data = json.loads((FIXTURES / "sample_insight.json").read_text())
+    insight = Insight.model_validate(data)
+    store.save_insight(insight)
+
+    loaded = store.load_insight(insight.id)
+    assert loaded.id == insight.id
+    assert loaded.insight_type == insight.insight_type
+
+
+def test_save_and_load_sft_sample(tmp_path):
+    """Can save an SFT sample and load it back."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sample = SFTSample.model_validate(data)
+    store.save_sample(sample)
+
+    loaded = store.load_sample(sample.id)
+    assert loaded.id == sample.id
+    assert loaded.sft_type == sample.sft_type
+
+
+def test_list_by_type(tmp_path):
+    """Can list all items of a given type."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+
+    data = json.loads((FIXTURES / "sample_insight.json").read_text())
+    insight = Insight.model_validate(data)
+    store.save_insight(insight)
+
+    items = store.list_insights()
+    assert len(items) == 1
+    assert items[0].id == insight.id
+
+
+def test_index_updates_on_save(tmp_path):
+    """index.json stats update when items are saved."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+
+    data = json.loads((FIXTURES / "sample_insight.json").read_text())
+    insight = Insight.model_validate(data)
+    store.save_insight(insight)
+
+    index = json.loads((tmp_path / "index.json").read_text())
+    assert index["stats"]["total_insights"] == 1
+
+
+def test_stats(tmp_path):
+    """stats() returns correct counts."""
+    store = EchoSmithStore(tmp_path)
+    store.init()
+
+    data_i = json.loads((FIXTURES / "sample_insight.json").read_text())
+    store.save_insight(Insight.model_validate(data_i))
+
+    data_s = json.loads((FIXTURES / "sample_sft.json").read_text())
+    store.save_sample(SFTSample.model_validate(data_s))
+
+    stats = store.stats()
+    assert stats["total_insights"] == 1
+    assert stats["total_samples"] == 1
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/test_store.py -v`
+Expected: FAIL — `ImportError: cannot import name 'EchoSmithStore'`
+
+- [ ] **Step 3: Implement store**
+
+```python
+# cli/echo_smith/store.py
+"""Local file store for Echo-smith data."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional
+
+from .models import Trace, Insight, SFTSample, Reminder, Correction
+
+
+class EchoSmithStore:
+    """Read/write Echo-smith data to ~/.echo-smith/."""
+
+    SUBDIRS = ("traces", "insights", "samples", "reminders", "corrections")
+
+    def __init__(self, root: Path | str):
+        self.root = Path(root)
+        self.data_dir = self.root / "data"
+        self.index_path = self.root / "index.json"
+
+    def init(self) -> None:
+        """Create directory structure and index."""
+        for subdir in self.SUBDIRS:
+            (self.data_dir / subdir).mkdir(parents=True, exist_ok=True)
+        if not self.index_path.exists():
+            self._write_index(self._empty_index())
+
+    # --- Save ---
+
+    def save_trace(self, trace: Trace) -> Path:
+        return self._save("traces", trace.id, trace)
+
+    def save_insight(self, insight: Insight) -> Path:
+        return self._save("insights", insight.id, insight)
+
+    def save_sample(self, sample: SFTSample) -> Path:
+        return self._save("samples", sample.id, sample)
+
+    def save_reminder(self, reminder: Reminder) -> Path:
+        return self._save("reminders", reminder.id, reminder)
+
+    def save_correction(self, correction: Correction) -> Path:
+        return self._save("corrections", correction.id, correction)
+
+    # --- Load ---
+
+    def load_trace(self, id_: str) -> Trace:
+        return Trace.model_validate_json(self._read("traces", id_))
+
+    def load_insight(self, id_: str) -> Insight:
+        return Insight.model_validate_json(self._read("insights", id_))
+
+    def load_sample(self, id_: str) -> SFTSample:
+        return SFTSample.model_validate_json(self._read("samples", id_))
+
+    def load_reminder(self, id_: str) -> Reminder:
+        return Reminder.model_validate_json(self._read("reminders", id_))
+
+    def load_correction(self, id_: str) -> Correction:
+        return Correction.model_validate_json(self._read("corrections", id_))
+
+    # --- List ---
+
+    def list_traces(self) -> list[Trace]:
+        return [Trace.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "traces").glob("*.json"))]
+
+    def list_insights(self) -> list[Insight]:
+        return [Insight.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "insights").glob("*.json"))]
+
+    def list_samples(self) -> list[SFTSample]:
+        return [SFTSample.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "samples").glob("*.json"))]
+
+    def list_reminders(self) -> list[Reminder]:
+        return [Reminder.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "reminders").glob("*.json"))]
+
+    def list_corrections(self) -> list[Correction]:
+        return [Correction.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "corrections").glob("*.json"))]
+
+    # --- Stats ---
+
+    def stats(self) -> dict:
+        """Return current counts."""
+        return {
+            "total_traces": len(list((self.data_dir / "traces").glob("*.json"))),
+            "total_insights": len(list((self.data_dir / "insights").glob("*.json"))),
+            "total_samples": len(list((self.data_dir / "samples").glob("*.json"))),
+            "total_reminders": len(list((self.data_dir / "reminders").glob("*.json"))),
+            "total_corrections": len(list((self.data_dir / "corrections").glob("*.json"))),
+        }
+
+    # --- Internal ---
+
+    def _save(self, subdir: str, id_: str, model: object) -> Path:
+        path = self.data_dir / subdir / f"{id_}.json"
+        path.write_text(model.model_dump_json(indent=2))
+        self._update_index()
+        return path
+
+    def _read(self, subdir: str, id_: str) -> str:
+        path = self.data_dir / subdir / f"{id_}.json"
+        return path.read_text()
+
+    def _update_index(self) -> None:
+        index = {
+            "last_updated": __import__("datetime").datetime.now().isoformat(),
+            "stats": self.stats(),
+        }
+        self._write_index(index)
+
+    def _write_index(self, index: dict) -> None:
+        self.index_path.write_text(json.dumps(index, indent=2))
+
+    @staticmethod
+    def _empty_index() -> dict:
+        return {
+            "last_updated": __import__("datetime").datetime.now().isoformat(),
+            "stats": {
+                "total_traces": 0,
+                "total_insights": 0,
+                "total_samples": 0,
+                "total_reminders": 0,
+                "total_corrections": 0,
+            },
+        }
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/test_store.py -v`
+Expected: All 6 tests PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add cli/echo_smith/store.py tests/test_store.py
+git commit -m "feat: add local file store with index management"
+```
+
+---
+
+## Task 3: Export Engine (SFT / DPO / JSONL)
+
+**Files:**
+- Create: `cli/echo_smith/export.py`
+- Create: `tests/test_export.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/test_export.py
+import json
+from pathlib import Path
+
+from echo_smith.models import SFTSample, Insight
+from echo_smith.store import EchoSmithStore
+from echo_smith.export import export_sft, export_dpo, export_jsonl
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _seed_store(tmp_path) -> EchoSmithStore:
+    store = EchoSmithStore(tmp_path)
+    store.init()
+    store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
+    store.save_sample(SFTSample.model_validate_json((FIXTURES / "sample_sft.json").read_text()))
+    return store
+
+
+def test_export_sft_format(tmp_path):
+    """SFT export produces messages-format JSONL."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 1
+    line = json.loads(output.read_text().strip())
+    assert "messages" in line
+    messages = line["messages"]
+    roles = [m["role"] for m in messages]
+    assert "system" in roles
+    assert "user" in roles
+    assert "assistant" in roles
+
+
+def test_export_dpo_format(tmp_path):
+    """DPO export produces prompt/chosen/rejected JSONL."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_dpo(store, output)
+    # dpo_rejected_available is True in fixture, but we don't have
+    # the original trajectory stored, so DPO uses a placeholder.
+    # Still, format must be correct.
+    assert count == 1
+    line = json.loads(output.read_text().strip())
+    assert "prompt" in line
+    assert "chosen" in line
+    assert "rejected" in line
+
+
+def test_export_jsonl_format(tmp_path):
+    """JSONL export dumps raw sample objects."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_jsonl(store, output)
+    assert count == 1
+    line = json.loads(output.read_text().strip())
+    assert "id" in line
+    assert "sft_type" in line
+
+
+def test_export_with_score_filter(tmp_path):
+    """Export with min_score filters low-quality samples."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output, min_score=0.99)
+    assert count == 0
+    assert output.read_text().strip() == ""
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/test_export.py -v`
+Expected: FAIL — `ImportError`
+
+- [ ] **Step 3: Implement export engine**
+
+```python
+# cli/echo_smith/export.py
+"""Multi-format export for Echo-smith SFT data."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional
+
+from .store import EchoSmithStore
+from .models import SFTSample
+
+
+def export_sft(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+    """Export SFT samples in messages format (OpenAI-compatible JSONL)."""
+    samples = _filter(store.list_samples(), min_score)
+    with output.open("w") as f:
+        for sample in samples:
+            messages = _to_messages(sample)
+            f.write(json.dumps(messages, ensure_ascii=False) + "\n")
+    return len(samples)
+
+
+def export_dpo(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+    """Export DPO pairs in prompt/chosen/rejected format."""
+    samples = _filter(store.list_samples(), min_score)
+    with output.open("w") as f:
+        for sample in samples:
+            pair = _to_dpo_pair(sample)
+            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+    return len(samples)
+
+
+def export_jsonl(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+    """Export raw SFT sample objects as JSONL."""
+    samples = _filter(store.list_samples(), min_score)
+    with output.open("w") as f:
+        for sample in samples:
+            f.write(sample.model_dump_json() + "\n")
+    return len(samples)
+
+
+def _filter(samples: list[SFTSample], min_score: Optional[float]) -> list[SFTSample]:
+    if min_score is None:
+        return samples
+    return [s for s in samples if (s.quality.local_score or 0) >= min_score]
+
+
+def _to_messages(sample: SFTSample) -> dict:
+    """Convert SFT sample to messages format."""
+    messages = [{"role": "system", "content": sample.query.system_context}]
+    for msg in sample.query.conversation_history:
+        if msg.role == "tool":
+            messages.append({
+                "role": "user",
+                "content": f"[Tool: {msg.name}]\nInput: {msg.input}\nOutput: {msg.output}",
+            })
+        elif msg.role == "user":
+            messages.append({"role": "user", "content": msg.content or ""})
+        elif msg.role == "assistant":
+            messages.append({"role": "assistant", "content": msg.content or ""})
+    # Final assistant turn: CoT + response
+    messages.append({
+        "role": "assistant",
+        "content": f"<think>\n{sample.cot}\n</think>\n\n{sample.response}",
+    })
+    return {"messages": messages}
+
+
+def _to_dpo_pair(sample: SFTSample) -> dict:
+    """Convert SFT sample to DPO pair format."""
+    # Build shared prompt from query
+    prompt_parts = [f"System: {sample.query.system_context}"]
+    for msg in sample.query.conversation_history:
+        if msg.role == "tool":
+            prompt_parts.append(f"[Tool: {msg.name}] {msg.output}")
+        elif msg.content:
+            prompt_parts.append(f"{msg.role}: {msg.content}")
+    prompt = "\n".join(prompt_parts)
+
+    chosen = f"<think>\n{sample.cot}\n</think>\n\n{sample.response}"
+
+    # Rejected is the original inefficient trajectory — if not available,
+    # use a minimal placeholder indicating it should come from the Trace.
+    rejected = "[original trajectory not stored — link to Trace for full rejected path]"
+
+    return {"prompt": prompt, "chosen": chosen, "rejected": rejected}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/test_export.py -v`
+Expected: All 4 tests PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add cli/echo_smith/export.py tests/test_export.py
+git commit -m "feat: add SFT/DPO/JSONL export engine"
+```
+
+---
+
+## Task 4: CLI Entry Point
+
+**Files:**
+- Create: `cli/echo_smith/cli.py`
+- Modify: `cli/echo_smith/__init__.py` (no changes needed)
+
+- [ ] **Step 1: Implement CLI**
+
+```python
+# cli/echo_smith/cli.py
+"""Echo-smith CLI entry point."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+
+from .store import EchoSmithStore
+from .export import export_sft, export_dpo, export_jsonl
+
+console = Console()
+DEFAULT_ROOT = Path.home() / ".echo-smith"
+
+
+def _store() -> EchoSmithStore:
+    store = EchoSmithStore(DEFAULT_ROOT)
+    if not (DEFAULT_ROOT / "data").exists():
+        console.print("[yellow]No data directory found. Run install.sh first.[/yellow]")
+        raise SystemExit(1)
+    return store
+
+
+@click.group()
+def main():
+    """Echo-smith: Extract learning experiences from AI coding interactions."""
+    pass
+
+
+@main.command()
+def stats():
+    """Show local data statistics."""
+    store = _store()
+    s = store.stats()
+    table = Table(title="Echo-smith Local Data")
+    table.add_column("Type", style="cyan")
+    table.add_column("Count", justify="right", style="green")
+    for key, val in s.items():
+        label = key.replace("total_", "").replace("_", " ").title()
+        table.add_row(label, str(val))
+    console.print(table)
+
+
+@main.command(name="list")
+@click.option("--type", "item_type", type=click.Choice(["insights", "samples", "reminders", "traces", "corrections"]), default="insights")
+@click.option("--limit", default=20, help="Max items to show")
+def list_items(item_type: str, limit: int):
+    """List stored items."""
+    store = _store()
+    loader = getattr(store, f"list_{item_type}")
+    items = loader()[:limit]
+    if not items:
+        console.print(f"[dim]No {item_type} found.[/dim]")
+        return
+    table = Table(title=f"{item_type.title()} ({len(items)})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Created", style="dim")
+    table.add_column("Detail")
+    for item in items:
+        detail = ""
+        if hasattr(item, "insight_type"):
+            detail = item.insight_type.value
+        elif hasattr(item, "sft_type"):
+            detail = item.sft_type.value
+        elif hasattr(item, "status"):
+            detail = item.status.value if hasattr(item.status, "value") else str(item.status)
+        table.add_row(item.id, item.created_at[:10], detail)
+    console.print(table)
+
+
+@main.command()
+@click.argument("item_id")
+def show(item_id: str):
+    """Show details of a specific item."""
+    store = _store()
+    prefix = item_id.split("-")[0]
+    loaders = {
+        "trace": store.load_trace,
+        "ins": store.load_insight,
+        "sft": store.load_sample,
+        "rem": store.load_reminder,
+        "cor": store.load_correction,
+    }
+    loader = loaders.get(prefix)
+    if not loader:
+        console.print(f"[red]Unknown ID prefix: {prefix}[/red]")
+        raise SystemExit(1)
+    item = loader(item_id)
+    console.print_json(item.model_dump_json(indent=2))
+
+
+@main.command()
+@click.option("--format", "fmt", type=click.Choice(["sft", "dpo", "jsonl"]), default="sft")
+@click.option("--output", "-o", type=click.Path(), default="echo-smith-export.jsonl")
+@click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
+def export(fmt: str, output: str, min_score: float | None):
+    """Export SFT training data."""
+    store = _store()
+    output_path = Path(output)
+    exporters = {"sft": export_sft, "dpo": export_dpo, "jsonl": export_jsonl}
+    count = exporters[fmt](store, output_path, min_score=min_score)
+    console.print(f"[green]Exported {count} samples to {output_path} ({fmt} format)[/green]")
+```
+
+- [ ] **Step 2: Smoke test CLI**
+
+Run: `cd /Users/lxs/code/echo-smith && echo-smith --help`
+Expected: Shows help with `stats`, `list`, `show`, `export` commands
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add cli/echo_smith/cli.py
+git commit -m "feat: add CLI with stats, list, show, export commands"
+```
+
+---
+
+## Task 5: Install Script and Config
+
+**Files:**
+- Create: `install.sh`
+- Create: `config.yaml.template`
+
+- [ ] **Step 1: Create config template**
+
+```yaml
+# config.yaml.template
+# Echo-smith configuration
+version: 1
+
+server:
+  url: null
+  api_key: null
+  auto_upload: false
+
+trigger:
+  min_retry_count: 3
+  auto_remind: true
+
+reminder:
+  target: claude_md
+  claude_md_section: "## Echo-smith Reminders"
+  max_active_reminders: 20
+
+retention:
+  max_local_samples: 1000
+  auto_cleanup_days: 90
+```
+
+- [ ] **Step 2: Create install script**
+
+```bash
+#!/usr/bin/env bash
+# install.sh — One-command Echo-smith installer
+set -euo pipefail
+
+ECHO_SMITH_HOME="$HOME/.echo-smith"
+SKILL_DIR="$HOME/.claude/skills/echo-smith"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+echo "=== Echo-smith Installer ==="
+
+# 1. Create data directory structure
+echo "Creating data directories..."
+mkdir -p "$ECHO_SMITH_HOME/data/traces"
+mkdir -p "$ECHO_SMITH_HOME/data/insights"
+mkdir -p "$ECHO_SMITH_HOME/data/samples"
+mkdir -p "$ECHO_SMITH_HOME/data/reminders"
+mkdir -p "$ECHO_SMITH_HOME/data/corrections"
+
+# 2. Create default config if not exists
+if [ ! -f "$ECHO_SMITH_HOME/config.yaml" ]; then
+    echo "Creating default config..."
+    cp "$SCRIPT_DIR/config.yaml.template" "$ECHO_SMITH_HOME/config.yaml"
+else
+    echo "Config already exists, skipping."
+fi
+
+# 3. Create index.json if not exists
+if [ ! -f "$ECHO_SMITH_HOME/index.json" ]; then
+    echo '{"last_updated": null, "stats": {"total_traces": 0, "total_insights": 0, "total_samples": 0, "total_reminders": 0, "total_corrections": 0}}' > "$ECHO_SMITH_HOME/index.json"
+fi
+
+# 4. Symlink skill to Claude Code skills directory
+echo "Installing skill..."
+mkdir -p "$HOME/.claude/skills"
+if [ -L "$SKILL_DIR" ]; then
+    rm "$SKILL_DIR"
+fi
+if [ -d "$SKILL_DIR" ]; then
+    echo "WARNING: $SKILL_DIR is a real directory, not a symlink. Skipping."
+else
+    ln -s "$SCRIPT_DIR/skills/echo-smith" "$SKILL_DIR"
+    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/echo-smith"
+fi
+
+# 5. Install CLI (optional — requires Python 3.10+)
+if command -v python3 &>/dev/null; then
+    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if python3 -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+        echo "Installing CLI tool (Python $PYTHON_VERSION)..."
+        pip install -e "$SCRIPT_DIR/cli/" --quiet
+        echo "CLI installed: run 'echo-smith --help'"
+    else
+        echo "Python $PYTHON_VERSION found but >=3.10 required. Skipping CLI install."
+    fi
+else
+    echo "Python not found. Skipping CLI install. Skill works without it."
+fi
+
+echo ""
+echo "=== Installation complete ==="
+echo "  Data:   $ECHO_SMITH_HOME/"
+echo "  Skill:  $SKILL_DIR"
+echo "  Config: $ECHO_SMITH_HOME/config.yaml"
+echo ""
+echo "The echo-smith skill will auto-activate in Claude Code sessions."
+```
+
+- [ ] **Step 3: Make executable and test**
+
+Run: `chmod +x /Users/lxs/code/echo-smith/install.sh && /Users/lxs/code/echo-smith/install.sh`
+Expected: Creates directories, symlinks skill, installs CLI
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add install.sh config.yaml.template
+git commit -m "feat: add install script and config template"
+```
+
+---
+
+## Task 6: SKILL.md (Main Skill Definition)
+
+**Files:**
+- Create: `skills/echo-smith/SKILL.md`
+
+This is the core of Echo-smith — the skill that Claude Code auto-discovers and invokes.
+
+- [ ] **Step 1: Write SKILL.md**
+
+```markdown
+<!-- skills/echo-smith/SKILL.md -->
+---
+name: echo-smith
+description: >
+  Use when the agent just received a user correction,
+  when the agent is about to retry an approach for the
+  third time, or when the agent realizes a previous
+  solution was wrong. Do not use when the task is
+  proceeding smoothly without notable friction.
+---
+
+# Echo-smith: Experience Distillation
+
+Extract learning experiences from the current interaction and persist them
+as SFT training data and CLAUDE.md reminder candidates. All reflection work
+runs in background subagents — never block or pollute the main workflow.
+
+## Trigger Criteria
+
+Invoke this skill when ANY of these are true:
+- You retried an approach 3+ times before succeeding
+- The user corrected your direction or thinking
+- You changed strategy after realizing your approach was wrong
+- The user provided a key hint that unblocked progress
+- You discover that a previous solution was actually incorrect
+
+## When NOT to Invoke
+
+- The task proceeded smoothly without notable friction
+- The only "issue" was gathering routine requirements
+- During an active systematic-debugging session (wait until it concludes)
+- Inside a subagent (only invoke from the main conversation)
+- Already in an echo-smith reflection cycle
+- Uncertain — under-triggering is better than over-triggering
+
+## Cost Assessment
+
+Before dispatching, quickly assess:
+- Is this interaction truly novel? (not a repeat of a known pattern)
+- Is the lesson generalizable? (not a one-off project detail)
+If either is NO, skip.
+
+## Execution Protocol
+
+### Step 1: Identify Trigger Type
+
+Determine which mode applies:
+- **Sidecar**: You detected a turning point mid-task
+- **Retrospective**: The task just completed and the process had friction
+- **Correction**: You discovered a historical insight was wrong
+
+### Step 2: Build Context Package
+
+Prepare a concise context snapshot for the subagent. Include ONLY:
+1. **Task description** (one sentence)
+2. **Episode summary**:
+   - What you did that was wrong or inefficient
+   - What the user said (if they intervened)
+   - What the correct approach turned out to be
+   - Key tool results that contained signals you missed
+3. **Project context** (language, framework, architecture)
+
+Do NOT include: full conversation history, unrelated code, other task discussions.
+
+### Step 3: Dispatch Subagent
+
+Use the Agent tool with `run_in_background=true`.
+
+Choose the appropriate prompt template:
+- Sidecar/Retrospective: Read `./sidecar-prompt.md` and include it in the agent prompt
+- Correction: Read `./correction-prompt.md` and include it in the agent prompt
+
+Pass the context package from Step 2 as the opening section of the prompt.
+
+### Step 4: Handle Result
+
+When the subagent completes:
+- If Reminder candidates were generated: **briefly** notify the user (one sentence)
+  and ask if they want to review. If approved, write to CLAUDE.md under
+  `## Echo-smith Reminders`.
+- If only SFT data was generated: silent, or one-line summary
+  ("Echo-smith: extracted 2 insights from this session").
+- **NEVER** expand details unless the user asks.
+
+## Interaction with Other Skills
+
+- Wait for `systematic-debugging` to conclude before triggering
+- Only trigger from the main conversation, never from within a subagent
+- Do not trigger during an active echo-smith cycle
+```
+
+- [ ] **Step 2: Verify skill is discoverable**
+
+Run: `ls -la ~/.claude/skills/echo-smith/SKILL.md`
+Expected: Symlink pointing to repo's `skills/echo-smith/SKILL.md`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add skills/echo-smith/SKILL.md
+git commit -m "feat: add main SKILL.md with auto-trigger and dispatch logic"
+```
+
+---
+
+## Task 7: Sidecar Subagent Prompt Template
+
+**Files:**
+- Create: `skills/echo-smith/sidecar-prompt.md`
+- Create: `skills/echo-smith/output-schema.md`
+
+This is the brain of the system — the prompt that guides the reflection subagent.
+
+- [ ] **Step 1: Create output schema reference**
+
+```markdown
+<!-- skills/echo-smith/output-schema.md -->
+# Echo-smith Output Schema
+
+All outputs are JSON files written to `~/.echo-smith/data/`.
+
+## File Locations
+
+- Traces: `~/.echo-smith/data/traces/{trace-id}.json`
+- Insights: `~/.echo-smith/data/insights/{insight-id}.json`
+- SFT Samples: `~/.echo-smith/data/samples/{sft-id}.json`
+- Reminders: `~/.echo-smith/data/reminders/{rem-id}.json`
+- Corrections: `~/.echo-smith/data/corrections/{cor-id}.json`
+
+## ID Format
+
+`{type_prefix}-{YYYYMMDD}-{random_6_hex}`
+
+Prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
+
+Example: `ins-20260410-a3f2c1`
+
+## Insight JSON Structure
+
+```json
+{
+  "id": "ins-YYYYMMDD-XXXXXX",
+  "trace_id": "trace-YYYYMMDD-XXXXXX",
+  "created_at": "ISO8601",
+  "insight_type": "skill_gap|knowledge_gap|reasoning_error|exploration_inefficiency|tool_orchestration|backtrack_failure|preference_probe|env_specific",
+  "status": "active",
+  "root_cause": {
+    "concrete": "Specific description of what went wrong",
+    "abstract": "Generalized pattern"
+  },
+  "user_correction": {
+    "type": "genuine_improvement|preference|environmental",
+    "description": "What the user said/did"
+  },
+  "adversarial_reflection": {
+    "attribution_a": {"argument": "Why the correction is better...", "confidence": 0.0-1.0},
+    "attribution_b": {"argument": "Why original was also valid...", "confidence": 0.0-1.0},
+    "verdict": "high_confidence|moderate|contested"
+  },
+  "generalization_ladder": {
+    "L1": "Most specific formulation",
+    "L2": "Moderate generalization",
+    "L3": "Most abstract formulation",
+    "selected_level": "L1"
+  },
+  "efficiency_metrics": {
+    "actual_rounds": 10,
+    "optimal_rounds": 3,
+    "wasted_rounds": 7,
+    "t_optimal": 2,
+    "missed_signals": [{"round": 2, "tool": "Read", "signal": "...", "why_missed": "..."}]
+  },
+  "independent_value": true,
+  "value_rationale": "Why this insight is valuable regardless of task outcome",
+  "quality": {"local_score": 0.0-1.0, "server_score": null}
+}
+```
+
+## SFT Sample JSON Structure
+
+```json
+{
+  "id": "sft-YYYYMMDD-XXXXXX",
+  "insight_id": "ins-YYYYMMDD-XXXXXX",
+  "created_at": "ISO8601",
+  "version": "concrete|abstract",
+  "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration",
+  "query": {
+    "system_context": "System prompt for the scenario",
+    "conversation_history": [
+      {"role": "user|assistant|tool", "content": "...", "name": "tool_name", "input": "...", "output": "..."}
+    ],
+    "decision_point": "Description of what the model faces at this moment"
+  },
+  "cot": "Improved chain-of-thought reasoning",
+  "response": "Ideal action/output",
+  "quality": {
+    "local_score": 0.0-1.0,
+    "server_score": null,
+    "evidence_anchored": true,
+    "no_post_hoc_rationalization": true,
+    "no_content_free_hedging": true
+  },
+  "dpo_rejected_available": false
+}
+```
+
+## Reminder JSON Structure
+
+```json
+{
+  "id": "rem-YYYYMMDD-XXXXXX",
+  "insight_id": "ins-YYYYMMDD-XXXXXX",
+  "created_at": "ISO8601",
+  "status": "pending_approval",
+  "rule": "Plain-text rule description",
+  "claude_md_text": "Markdown-formatted text for CLAUDE.md",
+  "lifecycle": {
+    "validation_count": 0,
+    "contradiction_count": 0,
+    "last_validated": null,
+    "confidence": 0.0-1.0,
+    "written_to_claude_md": false,
+    "user_approved": false
+  },
+  "scope": "global|project|personal"
+}
+```
+```
+
+- [ ] **Step 2: Create sidecar prompt template**
+
+```markdown
+<!-- skills/echo-smith/sidecar-prompt.md -->
+# Echo-smith Reflection Agent
+
+You are a background agent performing experience extraction.
+All outputs are written to files. Keep your work silent.
+
+## Input Context
+
+The dispatcher will provide:
+- Task description
+- Episode summary (what went wrong, user intervention, correct approach)
+- Project context (language, framework)
+
+## Workflow
+
+### 1. Episode Analysis
+
+Determine what went wrong and classify it. Use this failure mode checklist:
+
+- **Tunnel vision** (backtrack_failure): Persisting in one direction despite repeated failures
+- **Surface-level fix** (reasoning_error): Patching symptoms instead of root cause
+- **Shotgun modification** (reasoning_error): Changing code without understanding blast radius
+- **Convention blindness** (skill_gap): Ignoring codebase conventions
+- **Tool misuse** (tool_orchestration): Using wrong tools for the task
+- **Over-exploration** (exploration_inefficiency): Collecting information past the point of sufficiency
+
+If the user intervened, assess their correction type:
+- `genuine_improvement`: The correction is objectively better
+- `preference`: The correction reflects personal style (reframe as inquiry pattern)
+- `environmental`: The issue is environment-specific (Reminder, not SFT)
+
+### 2. Adversarial Reflection
+
+Generate two opposing attributions:
+
+**Attribution A**: "The correction/new approach is objectively better because..."
+(assign confidence 0.0-1.0)
+
+**Attribution B**: "The original approach was also valid because..."
+(assign confidence 0.0-1.0)
+
+**Verdict rules:**
+- A.confidence > 0.7 AND B.confidence < 0.3 → `high_confidence`
+- A.confidence > 0.5 AND B.confidence < 0.5 → `moderate`
+- Otherwise → `contested` (still save, but flag for review)
+
+Only generate SFT data for `high_confidence` and `moderate` insights.
+For `contested`, save the Insight but skip SFT generation.
+
+### 3. Optimal Decision Point Detection
+
+- **T_actual**: The moment the correct judgment was actually made
+- **T_optimal**: Backtrack from T_actual — find the earliest tool result
+  that already contained the key signal
+
+For each round between T_optimal and T_actual, record in `missed_signals`:
+what signal was present, and why it was missed.
+
+### 4. Generalization Ladder
+
+Generate three levels:
+- **L1** (most specific): Include framework, version, specific API names
+- **L2** (moderate): Abstract away specific tools, keep the pattern
+- **L3** (most abstract): Pure principle level
+
+Select L1 as default. Only use L2 if you are highly confident the pattern
+is not framework-specific.
+
+### 5. SFT Sample Construction
+
+#### Choosing sft_type
+
+| Situation | sft_type |
+|-----------|----------|
+| User corrected direction | `user_prompt_internalization` |
+| Model took too many rounds | `exploration_compression` |
+| Previous solution found wrong | `error_correction` |
+| User correction was preference-based | `preference_to_inquiry` |
+| Model persisted in wrong direction | `backtrack_decision` |
+| Model used wrong tools | `tool_orchestration` |
+
+#### Query Design
+
+Build the query to reflect real agentic interaction distribution:
+
+- **assistant ↔ tool interactions dominate** (this is realistic)
+- **user messages are minimal** (typically 1-3 turns)
+- Keep tool results that contain decision-relevant information
+- Trim large tool outputs: keep only relevant lines, annotate `[trimmed: N→M lines]`
+- Include prior failed attempts (they are training signal)
+- Target query length: 1000-3000 tokens
+
+**Cut point:**
+- For `exploration_compression`: cut at T_optimal
+- For `user_prompt_internalization`: cut at T_actual (before user hint)
+- For `backtrack_decision`: cut at the moment continuing was no longer rational
+- For `tool_orchestration`: cut before the inefficient tool call
+
+#### Prompt Internalization (for user_prompt_internalization)
+
+The user's hint is the learning signal SOURCE but must NOT appear in the query.
+Transform the user's wisdom into the model's own reasoning in the CoT:
+
+1. What did the user say?
+2. What information in the tool results could have led to the same conclusion?
+3. Reconstruct a reasoning chain from tool evidence → conclusion
+
+#### CoT Requirements
+
+REQUIRED patterns:
+- **Evidence-chained**: Every conclusion must reference specific tool output
+  ("Grep returned X at line 42, which indicates Y")
+- **Decision tree**: When multiple approaches exist, list and weigh them
+- **Expect-observe-revise**: When predictions fail, show the revision explicitly
+
+FORBIDDEN patterns:
+- **Post-hoc rationalization**: Mentioning specific line numbers or variable names
+  that weren't in any tool output → REJECT
+- **Content-free hedging**: "Let me carefully analyze..." without analysis → REVISE
+- **Over-explaining basics**: "package.json is a Node.js config file..." → REMOVE
+
+#### Quality Self-Check
+
+Before writing the SFT sample, verify:
+- Cover the CoT and look only at the query — can you derive the conclusion
+  from the information present? If not, the query is missing signals.
+- Does every conclusion in the CoT anchor to a specific tool result?
+- Is the CoT genuinely better than what actually happened, not just a restatement?
+
+### 6. Reminder Generation
+
+Generate a Reminder if the insight is:
+- `env_specific` (always)
+- A high-frequency pattern that benefits from immediate guidance
+- Something the current user will encounter again soon
+
+Format: a CLAUDE.md-compatible section with clear, actionable guidance.
+Set status to `pending_approval` — the main skill will ask the user.
+
+### 7. Contradiction Check
+
+Read `~/.echo-smith/index.json` to see existing data counts.
+If there are existing insights, scan `~/.echo-smith/data/insights/` for
+potential contradictions with the new insight.
+
+If a contradiction is found:
+- Create a Correction record (action: `invalidate` or `supersede`)
+- Update the old Insight's status to `invalidated` or `superseded`
+- The correction itself may generate a new Insight
+
+### 8. Write Outputs
+
+Write all generated data to `~/.echo-smith/data/` following the schema
+defined in `./output-schema.md`.
+
+Generate IDs using format: `{prefix}-{YYYYMMDD}-{random_6_hex}`
+
+Update `~/.echo-smith/index.json` after writing.
+
+Report a one-line summary of what was generated (e.g., "Generated 1 insight,
+2 SFT samples, 1 reminder candidate").
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add skills/echo-smith/sidecar-prompt.md skills/echo-smith/output-schema.md
+git commit -m "feat: add sidecar subagent prompt and output schema"
+```
+
+---
+
+## Task 8: Correction and Retrospective Prompt Templates
+
+**Files:**
+- Create: `skills/echo-smith/correction-prompt.md`
+- Create: `skills/echo-smith/retrospective-prompt.md`
+
+- [ ] **Step 1: Create correction prompt**
+
+```markdown
+<!-- skills/echo-smith/correction-prompt.md -->
+# Echo-smith Correction Agent
+
+You are a background agent correcting a historical insight that was found to be wrong.
+
+## Input Context
+
+The dispatcher will provide:
+- Description of the contradiction discovered
+- The ID of the insight to correct
+- Current context showing why the old insight is wrong
+
+## Workflow
+
+### 1. Load the Target Insight
+
+Read `~/.echo-smith/data/insights/{target_id}.json`.
+
+### 2. Analyze the Contradiction
+
+- What was the original insight's claim?
+- What new evidence contradicts it?
+- Is the original completely wrong, or just incomplete?
+
+### 3. Determine Correction Action
+
+- `invalidate`: Original is completely wrong. Mark status = "invalidated".
+- `supersede`: Original was partially right but needs replacement. Create new Insight.
+- `amend`: Original needs minor adjustment. Update the existing Insight.
+
+### 4. Generate Correction Record
+
+Write to `~/.echo-smith/data/corrections/` with:
+- Reference to target insight
+- Reason for correction
+- New insight ID if superseding
+- Lesson learned (the correction itself is a learning experience)
+
+### 5. Generate New SFT Data (if applicable)
+
+The correction often produces a valuable SFT sample of type `error_correction`:
+- Query: The context where the old (wrong) approach seemed correct
+- CoT: Reasoning that identifies why it's actually wrong and what's better
+- Response: The corrected approach
+
+### 6. Update Related Reminders
+
+If the corrected Insight has an associated Reminder in `~/.echo-smith/data/reminders/`:
+- Mark the old Reminder as `invalidated`
+- Generate a new Reminder if the corrected insight warrants one
+
+### 7. Write All Outputs
+
+Follow schema in `./output-schema.md`. Update `~/.echo-smith/index.json`.
+```
+
+- [ ] **Step 2: Create retrospective prompt**
+
+```markdown
+<!-- skills/echo-smith/retrospective-prompt.md -->
+# Echo-smith Retrospective Agent
+
+You are a background agent performing a full-session review after task completion.
+
+## Input Context
+
+The dispatcher will provide:
+- Task description and outcome (success/partial/failed)
+- Summary of the full session: key turning points, user interventions,
+  strategy changes, notable successes
+- Project context
+
+## Workflow
+
+### 1. Identify All Episodes
+
+Scan the provided session summary for cognitive turning points:
+- Moments where the approach changed
+- Moments where the user intervened
+- Moments where tool results were misinterpreted
+- Moments where the tool choice was suboptimal
+
+A session may have 0 episodes (smooth execution) or multiple.
+If 0, write nothing and report "No notable learning moments detected."
+
+### 2. For Each Episode
+
+Follow the same workflow as the sidecar agent (see `./sidecar-prompt.md`):
+1. Episode Analysis (with failure mode checklist)
+2. Adversarial Reflection
+3. Optimal Decision Point Detection
+4. Generalization Ladder
+5. SFT Sample Construction
+6. Reminder Generation (if applicable)
+7. Contradiction Check
+
+### 3. Cross-Episode Analysis
+
+After processing individual episodes, check:
+- Are any episodes related? (same root cause manifesting in different ways)
+- Can related episodes be merged into a single, stronger Insight?
+- Are there patterns across episodes that suggest a systematic weakness?
+
+### 4. Write All Outputs
+
+Follow schema in `./output-schema.md`. Update `~/.echo-smith/index.json`.
+
+Report summary: "Retrospective: found N episodes, generated M insights,
+K SFT samples, J reminder candidates."
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add skills/echo-smith/correction-prompt.md skills/echo-smith/retrospective-prompt.md
+git commit -m "feat: add correction and retrospective subagent prompts"
+```
+
+---
+
+## Task 9: README and Final Integration Test
+
+**Files:**
+- Create: `README.md`
+
+- [ ] **Step 1: Create README**
+
+```markdown
+<!-- README.md -->
+# Echo-smith
+
+Extract learning experiences from AI coding assistant interactions.
+Produces SFT training data and CLAUDE.md reminders.
+
+## Quick Start
+
+```bash
+git clone <repo-url>
+cd echo-smith
+./install.sh
+```
+
+This installs:
+- **Skill** → `~/.claude/skills/echo-smith/` (auto-activates in Claude Code)
+- **CLI** → `echo-smith` command (requires Python 3.10+)
+- **Data** → `~/.echo-smith/data/`
+
+## How It Works
+
+The echo-smith skill auto-activates when Claude Code detects:
+- Repeated trial-and-error (3+ retries)
+- User corrections or strategy changes
+- Discovery that a previous solution was wrong
+
+A background subagent extracts the learning and saves:
+- **SFT training data** (long-term model improvement)
+- **CLAUDE.md reminders** (immediate experience-based guidance)
+
+Your main workflow is never blocked or interrupted.
+
+## CLI Usage
+
+```bash
+echo-smith stats              # View data statistics
+echo-smith list --type samples  # Browse SFT samples
+echo-smith show sft-20260410-a1b2c3  # View specific item
+echo-smith export --format sft -o training.jsonl  # Export for training
+echo-smith export --format dpo -o preference.jsonl  # Export DPO pairs
+```
+
+## Data Location
+
+All data is stored at `~/.echo-smith/`:
+```
+~/.echo-smith/
+├── config.yaml
+├── index.json
+└── data/
+    ├── traces/
+    ├── insights/
+    ├── samples/
+    ├── reminders/
+    └── corrections/
+```
+```
+
+- [ ] **Step 2: Run full test suite**
+
+Run: `cd /Users/lxs/code/echo-smith && python -m pytest tests/ -v`
+Expected: All tests pass (9 model + 6 store + 4 export = 19 tests)
+
+- [ ] **Step 3: Final commit**
+
+```bash
+git add README.md
+git commit -m "feat: add README with quick start and usage docs"
+```
+
+- [ ] **Step 4: Verify skill is installed and accessible**
+
+Run: `ls -la ~/.claude/skills/echo-smith/ && cat ~/.claude/skills/echo-smith/SKILL.md | head -10`
+Expected: Shows symlink and SKILL.md frontmatter with name and description
+
+---
+
+## Deferred Work (P1 — Central Server)
+
+Tracked for next iteration. See spec Section 12.
+
+- [ ] Central server scaffolding (FastAPI + PostgreSQL)
+- [ ] Ingest API (`POST /api/v1/upload`)
+- [ ] Feedback API (`POST /api/v1/feedback`)
+- [ ] Data preview dashboard (React)
+- [ ] `echo-smith upload` CLI command
+
+## Deferred Work (P2/P3 — Advanced Quality)
+
+- [ ] Strong model re-evaluation pipeline
+- [ ] Cross-model voting validation
+- [ ] User credibility scoring
+- [ ] Curriculum learning data ordering
+- [ ] Desensitization pipeline
+- [ ] Cross-user conflict detection and clustering
+- [ ] Expert trajectory detection (positive reinforcement)
+- [ ] Generational isolation tagging
+- [ ] PRM-assisted quality filtering
+- [ ] Bootstrapped synthetic data generation
