@@ -73,12 +73,12 @@ def test_sft_sample_from_fixture():
     assert sample.sft_type == SFTType.exploration_compression
     # Ensure all 6 SFT types exist
     expected_types = {
+        "user_prompt_internalization",
         "exploration_compression",
-        "signal_recognition",
-        "tool_selection",
-        "error_recovery",
-        "architecture_choice",
-        "communication_style",
+        "error_correction",
+        "preference_to_inquiry",
+        "backtrack_decision",
+        "tool_orchestration",
     }
     actual_types = {t.value for t in SFTType}
     assert expected_types == actual_types

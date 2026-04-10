@@ -28,14 +28,14 @@ def generate_id(prefix: str) -> str:
 
 
 class InsightType(str, Enum):
+    skill_gap = "skill_gap"
     knowledge_gap = "knowledge_gap"
-    wrong_assumption = "wrong_assumption"
-    missed_signal = "missed_signal"
-    inefficient_strategy = "inefficient_strategy"
-    communication_failure = "communication_failure"
-    tool_misuse = "tool_misuse"
-    premature_action = "premature_action"
-    context_blindness = "context_blindness"
+    reasoning_error = "reasoning_error"
+    exploration_inefficiency = "exploration_inefficiency"
+    tool_orchestration = "tool_orchestration"
+    backtrack_failure = "backtrack_failure"
+    preference_probe = "preference_probe"
+    env_specific = "env_specific"
 
 
 class InsightStatus(str, Enum):
@@ -45,12 +45,12 @@ class InsightStatus(str, Enum):
 
 
 class SFTType(str, Enum):
+    user_prompt_internalization = "user_prompt_internalization"
     exploration_compression = "exploration_compression"
-    signal_recognition = "signal_recognition"
-    tool_selection = "tool_selection"
-    error_recovery = "error_recovery"
-    architecture_choice = "architecture_choice"
-    communication_style = "communication_style"
+    error_correction = "error_correction"
+    preference_to_inquiry = "preference_to_inquiry"
+    backtrack_decision = "backtrack_decision"
+    tool_orchestration = "tool_orchestration"
 
 
 class CorrectionAction(str, Enum):
@@ -61,6 +61,7 @@ class CorrectionAction(str, Enum):
 
 class ReminderStatus(str, Enum):
     pending_approval = "pending_approval"
+    approved = "approved"
     active = "active"
     expired = "expired"
     rejected = "rejected"
@@ -74,6 +75,7 @@ class CorrectionType(str, Enum):
 
 class TaskOutcome(str, Enum):
     success = "success"
+    success_after_correction = "success_after_correction"
     partial = "partial"
     failure = "failure"
     abandoned = "abandoned"
@@ -83,6 +85,9 @@ class TriggerMode(str, Enum):
     auto = "auto"
     manual = "manual"
     scheduled = "scheduled"
+    sidecar = "sidecar"
+    retrospective = "retrospective"
+    user_correction = "user_correction"
 
 
 class GeneralizationLevel(str, Enum):
@@ -107,8 +112,8 @@ class ReminderScope(str, Enum):
 
 class AdversarialVerdict(str, Enum):
     high_confidence = "high_confidence"
-    low_confidence = "low_confidence"
-    uncertain = "uncertain"
+    moderate = "moderate"
+    contested = "contested"
 
 
 # ── Sub-models ───────────────────────────────────────────────────────
@@ -248,6 +253,11 @@ class Insight(BaseModel):
     quality: QualityScore
 
 
+class DPORejected(BaseModel):
+    response: str
+    failure_mode: str
+
+
 class SFTSample(BaseModel):
     id: str
     insight_id: str
@@ -259,6 +269,7 @@ class SFTSample(BaseModel):
     response: str
     quality: SFTQualityScore
     dpo_rejected_available: bool = False
+    dpo_rejected: Optional[DPORejected] = None
 
 
 class Reminder(BaseModel):
