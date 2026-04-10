@@ -14,6 +14,11 @@ Extract learning experiences from the current interaction and persist them
 as SFT training data and CLAUDE.md reminder candidates. All reflection work
 runs in background subagents — never block or pollute the main workflow.
 
+## The Iron Law
+
+NEVER generate SFT data where the CoT references information not present in the query.
+NEVER block or degrade the user's main workflow for reflection work.
+
 ## Trigger Criteria
 
 Invoke this skill when ANY of these are true:
@@ -32,11 +37,25 @@ Invoke this skill when ANY of these are true:
 - Already in an echo-smith reflection cycle
 - Uncertain — under-triggering is better than over-triggering
 
+## Common Rationalizations
+
+These are traps. Recognize them and proceed anyway.
+
+| Thought | Reality |
+|---------|---------|
+| "This correction is too small to log" | Small corrections often reveal systematic patterns. Log it. |
+| "I'll just save a reminder, skip the SFT" | SFT is the long-term value; reminders are byproduct. Always generate both if quality passes. |
+| "The user's correction was obvious, not worth extracting" | If it was obvious, you should have done it right the first time. That's the learning. |
+| "Let me finish the task first, then reflect" | Use sidecar mode — reflection runs in background, doesn't block. |
+| "I already know this pattern" | If you knew it, you wouldn't have failed. Your knowledge and behavior are different things. |
+| "This is too project-specific to generalize" | Use L1 (most specific) generalization level. The specificity itself is valuable for SFT. |
+
 ## Cost Assessment
 
 Before dispatching, quickly assess:
 - Is this interaction truly novel? (not a repeat of a known pattern)
 - Is the lesson generalizable? (not a one-off project detail)
+
 If either is NO, skip.
 
 ## Execution Protocol
@@ -50,36 +69,55 @@ Determine which mode applies:
 
 ### Step 2: Build Context Package
 
-Prepare a concise context snapshot for the subagent. Include ONLY:
-1. **Task description** (one sentence)
-2. **Episode summary**:
-   - What you did that was wrong or inefficient
-   - What the user said (if they intervened)
-   - What the correct approach turned out to be
-   - Key tool results that contained signals you missed
-3. **Project context** (language, framework, architecture)
+Construct a structured context block for the subagent. Use this exact template:
 
-Do NOT include: full conversation history, unrelated code, other task discussions.
+---BEGIN CONTEXT---
+## Task
+[One sentence: what you were trying to accomplish]
+
+## Episode
+**What went wrong:** [Describe the incorrect approach or inefficient path]
+**User intervention:** [Exact quote or "none" if self-discovered]
+**Correct approach:** [What actually worked or should have been done]
+**Key evidence missed:** [Specific tool output that contained the signal]
+
+## Environment
+- Language: [e.g., Python 3.12]
+- Framework: [e.g., FastAPI, or "none"]
+- Key files: [list 1-3 most relevant files]
+
+## Existing Data
+- Total insights: [number from ~/.echo-smith/index.json]
+- Recent insight topics: [list last 3 root_cause.abstract if any]
+---END CONTEXT---
+
+After the context block, include the full content of the appropriate prompt template
+(sidecar-prompt.md, retrospective-prompt.md, or correction-prompt.md).
+
+Do NOT include: full conversation history, unrelated code, code you didn't read.
 
 ### Step 3: Dispatch Subagent
 
-Use the Agent tool with `run_in_background=true`.
+Use the Agent tool with these parameters:
+- `run_in_background: true` (never block main workflow)
+- `mode: "bypassPermissions"` (subagent needs to write to ~/.echo-smith/data/)
+- `model: "sonnet"` (sufficient for reflection; save opus for the user's main work)
 
-Choose the appropriate prompt template:
-- Sidecar/Retrospective: Read `./sidecar-prompt.md` and include it in the agent prompt
-- Correction: Read `./correction-prompt.md` and include it in the agent prompt
-
-Pass the context package from Step 2 as the opening section of the prompt.
+The prompt MUST include:
+1. The context package from Step 2 (above)
+2. The FULL content of the prompt template file — read it with the Read tool and paste it in.
+   Do NOT tell the subagent to "read ./sidecar-prompt.md" — it cannot access skill files.
+3. The FULL content of output-schema.md — same reason.
 
 ### Step 4: Handle Result
 
 When the subagent completes:
-- If Reminder candidates were generated: **briefly** notify the user (one sentence)
-  and ask if they want to review. If approved, write to CLAUDE.md under
-  `## Echo-smith Reminders`.
-- If only SFT data was generated: silent, or one-line summary
-  ("Echo-smith: extracted 2 insights from this session").
+- **Reminder candidates generated**: Briefly notify user (one sentence), ask to review.
+  If approved, write to CLAUDE.md under `## Echo-smith Reminders`.
+- **SFT data only**: Silent, or one-line summary ("Echo-smith: extracted 2 insights").
+- **Subagent failed or produced no output**: Log silently, do not bother the user.
 - **NEVER** expand details unless the user asks.
+- **NEVER** let echo-smith activity interrupt or slow the user's primary task.
 
 ## Interaction with Other Skills
 
