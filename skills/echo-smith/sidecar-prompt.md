@@ -3,6 +3,12 @@
 You are a background agent performing experience extraction.
 All outputs are written to files. Keep your work silent.
 
+## The Iron Law
+
+Every claim in the CoT MUST be derivable from evidence in the query.
+If you cannot point to a specific tool output or conversation message
+that supports a conclusion, that conclusion is post-hoc rationalization. Remove it.
+
 ## Input Context
 
 The dispatcher will provide:
@@ -136,25 +142,121 @@ Generate a Reminder if the insight is:
 Format: a CLAUDE.md-compatible section with clear, actionable guidance.
 Set status to `pending_approval` — the main skill will ask the user.
 
-### 7. Contradiction Check
+### 7. Contradiction Check (Lightweight)
 
-Read `~/.echo-smith/index.json` to see existing data counts.
-If there are existing insights, scan `~/.echo-smith/data/insights/` for
-potential contradictions with the new insight.
+Read `~/.echo-smith/index.json`. If total_insights > 0:
+1. List files in `~/.echo-smith/data/insights/` (most recent 5 only)
+2. For each, read the `root_cause.abstract` field
+3. If any directly contradicts the new insight, create a Correction record
+4. If no contradiction found, proceed
 
-If a contradiction is found:
-- Create a Correction record (action: `invalidate` or `supersede`)
-- Update the old Insight's status to `invalidated` or `superseded`
-- The correction itself may generate a new Insight
+Do NOT attempt exhaustive comparison. False negatives are acceptable;
+false positives (marking valid insights as contradicted) are not.
 
-### 8. Write Outputs
+### 8. Validate Before Writing
+
+Before writing any file, verify:
+- [ ] All enum values match the allowed values listed in Output Reference below
+- [ ] ID format is `{prefix}-{YYYYMMDD}-{6_hex_chars}`
+- [ ] All required fields are present (no null on required fields)
+- [ ] CoT passes the quality self-check from Step 5
+- [ ] JSON is syntactically valid (use json.dumps mentally — no trailing commas, proper escaping)
+
+If validation fails, fix the issue before writing. Do not write invalid data.
+
+### 9. Write Outputs
 
 Write all generated data to `~/.echo-smith/data/` following the schema
-defined in `./output-schema.md`.
-
-Generate IDs using format: `{prefix}-{YYYYMMDD}-{random_6_hex}`
+in the Output Reference section below.
 
 Update `~/.echo-smith/index.json` after writing.
 
 Report a one-line summary of what was generated (e.g., "Generated 1 insight,
 2 SFT samples, 1 reminder candidate").
+
+---
+
+## Output Reference
+
+### ID Format
+
+`{prefix}-{YYYYMMDD}-{random_6_hex}`
+
+Prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
+
+Example: `ins-20260410-a3f9c2`
+
+### Valid Enum Values
+
+**InsightType**: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`, `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`
+
+**InsightStatus**: `active`, `superseded`, `archived`
+
+**SFTType**: `user_prompt_internalization`, `exploration_compression`, `error_correction`, `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`
+
+**CorrectionType**: `genuine_improvement`, `stylistic_preference`, `factual_error`
+
+**AdversarialVerdict**: `high_confidence`, `moderate`, `contested`
+
+**GeneralizationLevel**: `L1`, `L2`, `L3`
+
+**ReminderStatus**: `pending_approval`, `approved`, `active`, `expired`, `rejected`
+
+**ReminderScope**: `global`, `project`, `language`
+
+### JSON Templates
+
+**Insight** (`~/.echo-smith/data/insights/{id}.json`):
+```json
+{
+  "id": "ins-YYYYMMDD-xxxxxx",
+  "type": "<InsightType>",
+  "status": "active",
+  "adversarial_verdict": "<AdversarialVerdict>",
+  "generalization_level": "<GeneralizationLevel>",
+  "root_cause": {
+    "concrete": "<specific description with framework/API names>",
+    "abstract": "<pattern-level description>"
+  },
+  "missed_signals": [
+    {"round": 1, "signal": "<what was present>", "why_missed": "<reason>"}
+  ],
+  "t_optimal": "<description of earliest decision point>",
+  "t_actual": "<description of actual decision point>",
+  "project_context": {"language": "", "framework": ""},
+  "created_at": "<ISO8601>"
+}
+```
+
+**SFTSample** (`~/.echo-smith/data/sft/{id}.json`):
+```json
+{
+  "id": "sft-YYYYMMDD-xxxxxx",
+  "insight_id": "ins-YYYYMMDD-xxxxxx",
+  "sft_type": "<SFTType>",
+  "query": [
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "..."},
+    {"role": "tool", "content": "..."}
+  ],
+  "response": {
+    "cot": "<chain-of-thought, evidence-anchored>",
+    "action": "<the correct next action>"
+  },
+  "cut_point_rationale": "<why the query was cut here>",
+  "created_at": "<ISO8601>"
+}
+```
+
+**Reminder** (`~/.echo-smith/data/reminders/{id}.json`):
+```json
+{
+  "id": "rem-YYYYMMDD-xxxxxx",
+  "insight_id": "ins-YYYYMMDD-xxxxxx",
+  "status": "pending_approval",
+  "scope": "<ReminderScope>",
+  "content": "<CLAUDE.md-compatible markdown section>",
+  "trigger_condition": "<when this reminder applies>",
+  "created_at": "<ISO8601>"
+}
+```
