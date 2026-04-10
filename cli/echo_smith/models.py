@@ -11,7 +11,7 @@ from datetime import datetime, date
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 # ── ID generation ────────────────────────────────────────────────────
