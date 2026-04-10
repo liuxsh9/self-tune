@@ -1,0 +1,21 @@
+# config.yaml.template
+# Echo-smith configuration
+version: 1
+
+server:
+  url: null
+  api_key: null
+  auto_upload: false
+
+trigger:
+  min_retry_count: 3
+  auto_remind: true
+
+reminder:
+  target: claude_md
+  claude_md_section: "## Echo-smith Reminders"
+  max_active_reminders: 20
+
+retention:
+  max_local_samples: 1000
+  auto_cleanup_days: 90
