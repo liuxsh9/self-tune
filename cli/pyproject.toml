@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "echo-smith"
+version = "0.1.0"
+description = "CLI tool for extracting self-improvement data from Claude Code sessions"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+echo-smith = "echo_smith.cli:main"

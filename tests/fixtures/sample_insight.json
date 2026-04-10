@@ -1,0 +1,30 @@
+{
+  "id": "ins-20260410-d4e5f6",
+  "trace_id": "trace-20260410-a1b2c3",
+  "created_at": "2026-04-10T14:32:00Z",
+  "insight_type": "knowledge_gap",
+  "status": "active",
+  "root_cause": {
+    "concrete": "Did not know microservice JWT should use asymmetric algorithm (RS256)",
+    "abstract": "When choosing crypto algorithms, failed to consider deployment architecture security constraints"
+  },
+  "user_correction": {"type": "genuine_improvement", "description": "User pointed out microservices should not share symmetric keys"},
+  "adversarial_reflection": {
+    "attribution_a": {"argument": "RS256 is objectively better for multi-service architectures because it eliminates shared secret distribution", "confidence": 0.88},
+    "attribution_b": {"argument": "HS256 could work if API gateway centralizes verification", "confidence": 0.35},
+    "verdict": "high_confidence"
+  },
+  "generalization_ladder": {
+    "L1": "In Express microservice JWT auth, use RS256 not HS256 when multiple services verify tokens",
+    "L2": "Microservice architectures require asymmetric JWT algorithms to avoid shared secret distribution",
+    "L3": "Deployment architecture constrains cryptographic algorithm choice",
+    "selected_level": "L1"
+  },
+  "efficiency_metrics": {
+    "actual_rounds": 10, "optimal_rounds": 3, "wasted_rounds": 7, "t_optimal": 2,
+    "missed_signals": [{"round": 2, "tool": "Read", "signal": "line 42: algorithm: 'HS256'", "why_missed": "Focused on function structure, did not cross-validate algorithm choice against architecture"}]
+  },
+  "independent_value": true,
+  "value_rationale": "RS256 vs HS256 knowledge is valid regardless of task outcome",
+  "quality": {"local_score": 0.82, "server_score": null}
+}

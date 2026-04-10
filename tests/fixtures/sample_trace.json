@@ -1,0 +1,18 @@
+{
+  "id": "trace-20260410-a1b2c3",
+  "created_at": "2026-04-10T14:30:00Z",
+  "source": "claude-code",
+  "model": "claude-sonnet-4-6",
+  "trigger": "auto",
+  "task_description": "Implement JWT auth middleware for microservice",
+  "task_outcome": "success",
+  "project_context": {"language": "typescript", "framework": "express", "repo": "internal/auth-service"},
+  "episodes": ["ep-20260410-x1y2z3"],
+  "conversation_snapshot": {
+    "segments": [
+      {"role": "assistant", "summary": "Attempted express-jwt with wrong algorithm parameter"},
+      {"role": "tool", "name": "Bash", "summary": "npm test → 'algorithm HS256 not allowed'", "is_key_signal": true},
+      {"role": "user", "summary": "Pointed out RS256 is needed for microservices", "is_correction": true}
+    ]
+  }
+}

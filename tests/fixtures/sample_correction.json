@@ -1,0 +1,10 @@
+{
+  "id": "cor-20260412-m3n4o5",
+  "created_at": "2026-04-12T10:00:00Z",
+  "target_type": "insight",
+  "target_id": "ins-20260410-d4e5f6",
+  "action": "supersede",
+  "reason": "Discovered the project uses API Gateway for centralized token verification, so HS256 is viable",
+  "new_insight_id": "ins-20260412-p6q7r8",
+  "lesson": {"abstract": "JWT algorithm choice depends not just on architecture pattern but also on verification topology", "generates_new_sample": true}
+}

@@ -1,0 +1,10 @@
+{
+  "id": "rem-20260410-j0k1l2",
+  "insight_id": "ins-20260410-d4e5f6",
+  "created_at": "2026-04-10T14:33:00Z",
+  "status": "pending_approval",
+  "rule": "When configuring JWT, first confirm deployment architecture. Microservices require asymmetric algorithms (RS256).",
+  "claude_md_text": "## [Echo-smith] JWT Algorithm Selection\nWhen implementing JWT auth, first ask or confirm the deployment architecture. Use RS256 (asymmetric) for microservices, HS256 (symmetric) is acceptable for monoliths.",
+  "lifecycle": {"validation_count": 0, "contradiction_count": 0, "last_validated": null, "confidence": 0.82, "written_to_claude_md": false, "user_approved": false},
+  "scope": "global"
+}
