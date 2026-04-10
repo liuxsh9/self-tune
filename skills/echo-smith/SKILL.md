@@ -1,11 +1,11 @@
 ---
 name: echo-smith
 description: >
-  Use when the agent just received a user correction,
-  when the agent is about to retry an approach for the
-  third time, or when the agent realizes a previous
-  solution was wrong. Do not use when the task is
-  proceeding smoothly without notable friction.
+  Use when the user corrects the agent's approach or provides
+  a hint that changes direction, when the agent retried or
+  changed strategy after something failed, or when the agent
+  discovers a previous solution was wrong. Do not use when
+  the task is proceeding smoothly without friction.
 ---
 
 # Echo-smith: Experience Distillation
@@ -17,7 +17,7 @@ runs in background subagents — never block or pollute the main workflow.
 ## Trigger Criteria
 
 Invoke this skill when ANY of these are true:
-- You retried an approach 3+ times before succeeding
+- You retried an approach after it failed or hit a dead end
 - The user corrected your direction or thinking
 - You changed strategy after realizing your approach was wrong
 - The user provided a key hint that unblocked progress
