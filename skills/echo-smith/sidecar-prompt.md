@@ -31,8 +31,8 @@ Determine what went wrong and classify it. Use this failure mode checklist:
 
 If the user intervened, assess their correction type:
 - `genuine_improvement`: The correction is objectively better
-- `preference`: The correction reflects personal style (reframe as inquiry pattern)
-- `environmental`: The issue is environment-specific (Reminder, not SFT)
+- `stylistic_preference`: The correction reflects personal style (reframe as inquiry pattern)
+- `factual_error`: The user caught a factual mistake
 
 ### 2. Adversarial Reflection
 
@@ -210,41 +210,77 @@ Example: `ins-20260410-a3f9c2`
 ```json
 {
   "id": "ins-YYYYMMDD-xxxxxx",
-  "type": "<InsightType>",
+  "trace_id": "trace-YYYYMMDD-xxxxxx",
+  "created_at": "<ISO8601>",
+  "insight_type": "<InsightType>",
   "status": "active",
-  "adversarial_verdict": "<AdversarialVerdict>",
-  "generalization_level": "<GeneralizationLevel>",
   "root_cause": {
     "concrete": "<specific description with framework/API names>",
     "abstract": "<pattern-level description>"
   },
-  "missed_signals": [
-    {"round": 1, "signal": "<what was present>", "why_missed": "<reason>"}
-  ],
-  "t_optimal": "<description of earliest decision point>",
-  "t_actual": "<description of actual decision point>",
-  "project_context": {"language": "", "framework": ""},
-  "created_at": "<ISO8601>"
+  "user_correction": {
+    "type": "<CorrectionType>",
+    "description": "<what the user said/did>"
+  },
+  "adversarial_reflection": {
+    "attribution_a": {"argument": "<why correction is better>", "confidence": 0.85},
+    "attribution_b": {"argument": "<why original was valid>", "confidence": 0.2},
+    "verdict": "<AdversarialVerdict>"
+  },
+  "generalization_ladder": {
+    "L1": "<most specific>",
+    "L2": "<moderate>",
+    "L3": "<most abstract>",
+    "selected_level": "L1"
+  },
+  "efficiency_metrics": {
+    "actual_rounds": 5,
+    "optimal_rounds": 2,
+    "wasted_rounds": 3,
+    "t_optimal": 2,
+    "missed_signals": [
+      {"round": 2, "tool": "Read", "signal": "<what was present>", "why_missed": "<reason>"}
+    ]
+  },
+  "independent_value": true,
+  "value_rationale": "<why this insight is valuable>",
+  "quality": {"local_score": 0.85, "server_score": null}
 }
 ```
 
-**SFTSample** (`~/.echo-smith/data/sft/{id}.json`):
+`user_correction` and `efficiency_metrics` are optional (null when absent).
+
+**SFTSample** (`~/.echo-smith/data/samples/{id}.json`):
 ```json
 {
   "id": "sft-YYYYMMDD-xxxxxx",
   "insight_id": "ins-YYYYMMDD-xxxxxx",
+  "created_at": "<ISO8601>",
+  "version": "concrete",
   "sft_type": "<SFTType>",
-  "query": [
-    {"role": "user", "content": "..."},
-    {"role": "assistant", "content": "..."},
-    {"role": "tool", "content": "..."}
-  ],
-  "response": {
-    "cot": "<chain-of-thought, evidence-anchored>",
-    "action": "<the correct next action>"
+  "query": {
+    "system_context": "<system prompt for the scenario>",
+    "conversation_history": [
+      {"role": "user", "content": "..."},
+      {"role": "assistant", "content": "..."},
+      {"role": "tool", "name": "Bash", "input": "...", "output": "..."}
+    ],
+    "decision_point": "<what the model faces at this moment>"
   },
-  "cut_point_rationale": "<why the query was cut here>",
-  "created_at": "<ISO8601>"
+  "cot": "<improved chain-of-thought, evidence-anchored>",
+  "response": "<ideal action/output>",
+  "quality": {
+    "local_score": 0.9,
+    "server_score": null,
+    "evidence_anchored": true,
+    "no_post_hoc_rationalization": true,
+    "no_content_free_hedging": true
+  },
+  "dpo_rejected_available": true,
+  "dpo_rejected": {
+    "response": "<the suboptimal response>",
+    "failure_mode": "<why this response is worse>"
+  }
 }
 ```
 
@@ -253,10 +289,18 @@ Example: `ins-20260410-a3f9c2`
 {
   "id": "rem-YYYYMMDD-xxxxxx",
   "insight_id": "ins-YYYYMMDD-xxxxxx",
+  "created_at": "<ISO8601>",
   "status": "pending_approval",
-  "scope": "<ReminderScope>",
-  "content": "<CLAUDE.md-compatible markdown section>",
-  "trigger_condition": "<when this reminder applies>",
-  "created_at": "<ISO8601>"
+  "rule": "<plain-text rule description>",
+  "claude_md_text": "<markdown-formatted text for CLAUDE.md>",
+  "lifecycle": {
+    "validation_count": 0,
+    "contradiction_count": 0,
+    "last_validated": null,
+    "confidence": 0.8,
+    "written_to_claude_md": false,
+    "user_approved": false
+  },
+  "scope": "<ReminderScope>"
 }
 ```

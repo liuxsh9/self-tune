@@ -145,12 +145,15 @@ Report a one-line summary (e.g., "Correction applied: superseded ins-20260410-a3
 ```json
 {
   "id": "cor-YYYYMMDD-XXXXXX",
-  "target_insight_id": "ins-YYYYMMDD-XXXXXX",
   "created_at": "ISO8601",
+  "target_type": "insight",
+  "target_id": "ins-YYYYMMDD-XXXXXX",
   "action": "retract|supersede|amend",
-  "adversarial_verdict": "high_confidence|moderate|contested",
   "reason": "Why the original insight is wrong",
   "new_insight_id": "ins-YYYYMMDD-XXXXXX or null",
-  "lesson_learned": "What this correction itself teaches"
+  "lesson": {
+    "abstract": "What this correction itself teaches",
+    "generates_new_sample": false
+  }
 }
 ```
