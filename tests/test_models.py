@@ -1,4 +1,4 @@
-"""Tests for Echo-smith Pydantic data models."""
+"""Tests for Self-tune Pydantic data models."""
 
 import json
 import re
@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from echo_smith.models import (
+from self_tune.models import (
     Correction,
     Insight,
-    Reminder,
     SFTSample,
     SFTType,
     Trace,
@@ -82,16 +81,6 @@ def test_sft_sample_from_fixture():
     }
     actual_types = {t.value for t in SFTType}
     assert expected_types == actual_types
-
-
-def test_reminder_from_fixture():
-    """Reminder model validates fixture."""
-    data = load_fixture("sample_reminder.json")
-    reminder = Reminder.model_validate(data)
-    assert reminder.id == "rem-20260410-j0k1l2"
-    assert reminder.status.value == "pending_approval"
-    assert reminder.lifecycle.confidence == 0.82
-    assert reminder.lifecycle.written_to_claude_md is False
 
 
 def test_correction_from_fixture():

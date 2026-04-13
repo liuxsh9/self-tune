@@ -2,27 +2,26 @@
 import json
 from pathlib import Path
 
-from echo_smith.models import Insight, SFTSample, Reminder, Trace, Correction
-from echo_smith.store import EchoSmithStore
+from self_tune.models import Insight, SFTSample, Trace, Correction
+from self_tune.store import SelfTuneStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_init_creates_directory_structure(tmp_path):
     """Store.init() creates required subdirectories."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
     assert (tmp_path / "data" / "traces").is_dir()
     assert (tmp_path / "data" / "insights").is_dir()
     assert (tmp_path / "data" / "samples").is_dir()
-    assert (tmp_path / "data" / "reminders").is_dir()
     assert (tmp_path / "data" / "corrections").is_dir()
     assert (tmp_path / "index.json").exists()
 
 
 def test_save_and_load_insight(tmp_path):
     """Can save an Insight and load it back."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
     data = json.loads((FIXTURES / "sample_insight.json").read_text())
     insight = Insight.model_validate(data)
@@ -35,7 +34,7 @@ def test_save_and_load_insight(tmp_path):
 
 def test_save_and_load_sft_sample(tmp_path):
     """Can save an SFT sample and load it back."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
     data = json.loads((FIXTURES / "sample_sft.json").read_text())
     sample = SFTSample.model_validate(data)
@@ -48,7 +47,7 @@ def test_save_and_load_sft_sample(tmp_path):
 
 def test_list_by_type(tmp_path):
     """Can list all items of a given type."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
 
     data = json.loads((FIXTURES / "sample_insight.json").read_text())
@@ -62,7 +61,7 @@ def test_list_by_type(tmp_path):
 
 def test_index_updates_on_save(tmp_path):
     """index.json stats update when items are saved."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
 
     data = json.loads((FIXTURES / "sample_insight.json").read_text())
@@ -75,7 +74,7 @@ def test_index_updates_on_save(tmp_path):
 
 def test_stats(tmp_path):
     """stats() returns correct counts."""
-    store = EchoSmithStore(tmp_path)
+    store = SelfTuneStore(tmp_path)
     store.init()
 
     data_i = json.loads((FIXTURES / "sample_insight.json").read_text())

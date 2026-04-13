@@ -1,4 +1,4 @@
-# Echo-smith Correction Agent
+# Self-tune Correction Agent
 
 You are a background agent correcting a historical insight that was found to be wrong.
 All outputs are written to files. Keep your work silent.
@@ -19,7 +19,7 @@ The dispatcher will provide:
 
 ### 1. Load the Target Insight
 
-Read `~/.echo-smith/data/insights/{target_id}.json`.
+Read `~/.self-tune/data/insights/{target_id}.json`.
 
 ### 2. Analyze the Contradiction
 
@@ -67,7 +67,7 @@ Only use L2 if you are highly confident the pattern is not framework-specific.
 
 ### 6. Generate Correction Record
 
-Write to `~/.echo-smith/data/corrections/{cor-id}.json` with:
+Write to `~/.self-tune/data/corrections/{cor-id}.json` with:
 - `target_insight_id`: the ID of the insight being corrected
 - `reason`: why the original insight is wrong
 - `action`: retract | supersede | amend
@@ -98,48 +98,31 @@ Only generate for `high_confidence` and `moderate` verdicts.
   that were not in any tool output — REJECT
 - Content-free hedging: "Let me carefully analyze..." without analysis — REVISE
 - Over-explaining basics: "package.json is a Node.js config file..." — REMOVE
+- Fabricated execution: response must NEVER contain hypothetical tool outputs,
+  imagined results, or narrated multi-step execution — REJECT entire sample
 
 **Quality self-check before writing:**
 - Cover the CoT and look only at the query — can you derive the conclusion
   from the information present? If not, the query is missing signals.
 - Does every conclusion in the CoT anchor to a specific tool result?
 - Is the CoT genuinely better than what actually happened, not just a restatement?
+- Does the response end at the FIRST correct action? No fabricated tool outputs.
 
-**Response**: the corrected approach stated clearly and actionably.
+**Response and action rules:**
+- When the correct move is a tool call: set `action` (e.g., `{"tool": "Bash", "input": "date"}`),
+  set `response` to a brief intent description.
+- When the correct move is a direct reply: set `action` to null, set `response` to the ideal message.
 
-### 8. Update Related Reminders
-
-If the corrected Insight has an associated Reminder in `~/.echo-smith/data/reminders/`:
-- Mark the old Reminder status as `expired`
-- Generate a new Reminder if the corrected insight warrants one
-  (set status to `pending_approval`)
-
-### 9. Validate and Write Outputs
+### 8. Validate and Write Outputs
 
 Before writing, verify:
 - All enum values are valid (see Output Reference below)
 - ID format: `{prefix}-{YYYYMMDD}-{random_6_hex}`
 - JSON is syntactically valid
 
-Write files to `~/.echo-smith/data/`. Update `~/.echo-smith/index.json`.
+Write files to `~/.self-tune/data/`. Update `~/.self-tune/index.json`.
 
 Report a one-line summary (e.g., "Correction applied: superseded ins-20260410-a3f2c1, generated 1 SFT sample").
-
-## Output Reference
-
-**Valid enum values:**
-
-- InsightType: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`,
-  `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`
-- InsightStatus: `active`, `superseded`, `archived`
-- SFTType: `user_prompt_internalization`, `exploration_compression`, `error_correction`,
-  `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`
-- CorrectionAction: `supersede`, `amend`, `retract`
-- AdversarialVerdict: `high_confidence`, `moderate`, `contested`
-- GeneralizationLevel: `L1`, `L2`, `L3`
-- ReminderStatus: `pending_approval`, `approved`, `active`, `expired`, `rejected`
-- ReminderScope: `global`, `project`, `language`
-- ID prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
 
 **Correction record template:**
 ```json

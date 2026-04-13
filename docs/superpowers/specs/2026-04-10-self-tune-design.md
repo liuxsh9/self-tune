@@ -1,4 +1,4 @@
-# Echo-smith Design Specification
+# Self-tune Design Specification
 
 > Version: 1.0 | Date: 2026-04-10
 > Status: Draft
@@ -11,7 +11,7 @@ AI coding assistants (Claude Code, Cursor, Copilot, etc.) frequently require mul
 
 ### 1.2 Solution
 
-Echo-smith is a system that automatically extracts learning experiences from AI coding assistant interactions and produces two outputs:
+Self-tune is a system that automatically extracts learning experiences from AI coding assistant interactions and produces two outputs:
 
 - **SFT training data** (long-term): Structured query + chain-of-thought + response samples that teach models to make better decisions autonomously in agentic multi-turn scenarios.
 - **CLAUDE.md reminders** (short-term): Actionable rules written to the user's configuration, providing immediate experience-based guidance in subsequent sessions.
@@ -38,7 +38,7 @@ Phase 1: Skill + Local Storage
 │       │                                                   │
 │       ▼ (model detects learning signal via skill match)   │
 │  ┌──────────────────────────────────────────┐             │
-│  │  Echo-smith Skill                        │             │
+│  │  Self-tune Skill                        │             │
 │  │  → Spawns background subagent            │             │
 │  │  → Main workflow continues unblocked     │             │
 │  └──────────────────────────────────────────┘             │
@@ -50,12 +50,12 @@ Phase 1: Skill + Local Storage
 │  │  - Generate Insight (dual version)       │             │
 │  │  - Build SFT samples                     │             │
 │  │  - Generate Reminder candidates          │             │
-│  │  - Write to ~/.echo-smith/data/          │             │
+│  │  - Write to ~/.self-tune/data/          │             │
 │  └──────────────────────────────────────────┘             │
 └───────────────────────────────────────────────────────────┘
 
 Phase 2: + CLI Tool
-  echo-smith-cli: batch validation, quality scoring,
+  self-tune-cli: batch validation, quality scoring,
   multi-format export (SFT/DPO), data management
 
 Phase 3: + Central Server
@@ -67,9 +67,9 @@ Phase 3: + Central Server
 
 | Component | Phase | Responsibility |
 |-----------|-------|----------------|
-| Echo-smith Skill | 1 | Trigger detection, subagent dispatch, reminder approval |
+| Self-tune Skill | 1 | Trigger detection, subagent dispatch, reminder approval |
 | Reflection Subagent | 1 | Episode analysis, insight extraction, SFT/reminder generation |
-| Local Storage | 1 | Structured file-based persistence at `~/.echo-smith/` |
+| Local Storage | 1 | Structured file-based persistence at `~/.self-tune/` |
 | CLI Tool | 2 | Batch operations, quality scoring, export, upload |
 | Central Server | 3 | Aggregation, strong-model judging, dataset production |
 
@@ -143,7 +143,7 @@ The skill uses Claude Code's native skill-matching mechanism. The model evaluate
 
 ```yaml
 ---
-name: echo-smith
+name: self-tune
 description: >
   Use when the agent just received a user correction,
   when the agent is about to retry an approach for the
@@ -164,7 +164,7 @@ Model detects a turning point mid-task → spawns a background subagent with a c
 Task finishes → model judges the process had notable learning moments → spawns a background subagent for full-process review.
 
 **Manual Mode (user-initiated):**
-User invokes `/echo-smith` directly. Preserved but not relied upon.
+User invokes `/self-tune` directly. Preserved but not relied upon.
 
 ### 4.3 Trigger Criteria
 
@@ -180,7 +180,7 @@ User invokes `/echo-smith` directly. Preserved but not relied upon.
 - The only "issue" was gathering routine requirements
 - During an active `systematic-debugging` skill session (wait until it concludes)
 - Inside a subagent (only trigger from the main conversation)
-- Already in an echo-smith reflection cycle
+- Already in an self-tune reflection cycle
 - Uncertain — under-triggering is better than over-triggering
 
 ### 4.4 Cost Assessment Gate
@@ -198,7 +198,7 @@ If any answer is NO, skip invocation.
 
 ### 5.1 Core Constraint
 
-The main conversation context is inviolable. Echo-smith's total footprint in the main context must be < 100 tokens per trigger:
+The main conversation context is inviolable. Self-tune's total footprint in the main context must be < 100 tokens per trigger:
 - Trigger judgment: internal model decision, zero output
 - Spawn subagent: one tool call (~50 tokens)
 - Result notification: one sentence (~30 tokens)
@@ -213,7 +213,7 @@ Passed to subagent:
      - What the user said (if applicable — correction/hint)
      - What the correct approach turned out to be
   3. Project context (language, framework, architecture)
-  4. Instruction: execute echo-smith reflection workflow
+  4. Instruction: execute self-tune reflection workflow
 
 NOT passed:
   ✗ Full conversation history
@@ -384,7 +384,7 @@ Each Insight is evaluated independently of the task's overall outcome:
 ### 8.1 Storage Structure
 
 ```
-~/.echo-smith/                    # Global, cross-project
+~/.self-tune/                    # Global, cross-project
 ├── config.yaml                   # User configuration
 ├── data/
 │   ├── traces/                   # Raw trajectory snapshots
@@ -401,7 +401,7 @@ Each Insight is evaluated independently of the task's overall outcome:
 └── upload-log.json               # Upload history
 ```
 
-Located at `~/.echo-smith/` (not project directory) because:
+Located at `~/.self-tune/` (not project directory) because:
 - Insights are cross-project knowledge
 - Avoids polluting git repositories
 - One instance per developer for company-wide deployment
@@ -559,7 +559,7 @@ Examples: `trace-20260410-a1b2c3`, `ins-20260410-d4e5f6`, `sft-20260410-g7h8i9`
 
   "rule": "When configuring JWT, first confirm deployment architecture. Microservices require asymmetric algorithms (RS256); monoliths can use symmetric (HS256).",
 
-  "claude_md_text": "## [Echo-smith] JWT Algorithm Selection\nWhen implementing JWT auth, first ask or confirm the deployment architecture. Use RS256 (asymmetric) for microservices, HS256 (symmetric) is acceptable for monoliths.",
+  "claude_md_text": "## [Self-tune] JWT Algorithm Selection\nWhen implementing JWT auth, first ask or confirm the deployment architecture. Use RS256 (asymmetric) for microservices, HS256 (symmetric) is acceptable for monoliths.",
 
   "lifecycle": {
     "validation_count": 0,
@@ -602,9 +602,9 @@ Examples: `trace-20260410-a1b2c3`, `ins-20260410-d4e5f6`, `sft-20260410-g7h8i9`
 ### 9.1 File Structure
 
 ```
-echo-smith/
+self-tune/
 ├── skills/
-│   └── echo-smith/
+│   └── self-tune/
 │       ├── SKILL.md                  # Main skill definition
 │       ├── sidecar-prompt.md         # Sidecar subagent prompt template
 │       ├── retrospective-prompt.md   # Retrospective subagent prompt template
@@ -620,7 +620,7 @@ echo-smith/
 
 ```markdown
 ---
-name: echo-smith
+name: self-tune
 description: >
   Use when the agent just received a user correction,
   when the agent is about to retry an approach for the
@@ -629,7 +629,7 @@ description: >
   proceeding smoothly without notable friction.
 ---
 
-# Echo-smith: Experience Distillation
+# Self-tune: Experience Distillation
 
 ## Trigger Criteria
 [Specific conditions — see Section 4.3]
@@ -663,7 +663,7 @@ When subagent completes:
 ## Interaction with Other Skills
 - Wait for systematic-debugging to conclude before triggering
 - Only trigger from main conversation, never from within a subagent
-- Do not trigger during an active echo-smith cycle
+- Do not trigger during an active self-tune cycle
 ```
 
 ### 9.3 Subagent Prompt Template (sidecar-prompt.md)
@@ -671,7 +671,7 @@ When subagent completes:
 Core instructions for the reflection subagent:
 
 ```markdown
-# Echo-smith Sidecar Reflection Agent
+# Self-tune Sidecar Reflection Agent
 
 You are a background agent performing experience extraction.
 Your output is written to files only. Keep your work silent.
@@ -733,15 +733,15 @@ The ideal action given the improved CoT reasoning.
 
 ### 6. Reminder Generation (if applicable)
 For env_specific or high-frequency issues, generate CLAUDE.md-compatible rule.
-Write to ~/.echo-smith/data/reminders/ (pending_approval status).
+Write to ~/.self-tune/data/reminders/ (pending_approval status).
 
 ### 7. Contradiction Check
-Read ~/.echo-smith/data/index.json first.
+Read ~/.self-tune/data/index.json first.
 Only load specific insight files if potential conflict detected.
 If contradiction found: generate Correction record.
 
 ### 8. Persist All Outputs
-Write to ~/.echo-smith/data/ following schema definitions.
+Write to ~/.self-tune/data/ following schema definitions.
 Update index.json.
 ```
 
@@ -755,7 +755,7 @@ Update index.json.
 Subagent generates → writes to reminders/ as pending_approval
     → Main conversation notifies user (one sentence)
     → User approves or rejects
-    → If approved: write to CLAUDE.md under "## Echo-smith Reminders"
+    → If approved: write to CLAUDE.md under "## Self-tune Reminders"
     → If rejected: mark as rejected, do not persist
 ```
 
@@ -779,23 +779,23 @@ Each active Reminder tracks:
 ### 11.1 Commands
 
 ```
-echo-smith stats                   # Local data statistics
-echo-smith list [--type] [--status]   # Browse data
-echo-smith show <id>               # View single record
-echo-smith export                  # Export data
+self-tune stats                   # Local data statistics
+self-tune list [--type] [--status]   # Browse data
+self-tune show <id>               # View single record
+self-tune export                  # Export data
   --format sft|dpo|jsonl           # Output format
   --filter "score>0.7"             # Quality filter
-echo-smith upload                  # Upload to central server
+self-tune upload                  # Upload to central server
   --dry-run                        # Preview upload content
-echo-smith validate                # Batch quality validation
-echo-smith remind --sync           # Sync pending reminders
-echo-smith remind --prune          # Clean expired/low-confidence reminders
-echo-smith gc                      # Clean up old data
+self-tune validate                # Batch quality validation
+self-tune remind --sync           # Sync pending reminders
+self-tune remind --prune          # Clean expired/low-confidence reminders
+self-tune gc                      # Clean up old data
 ```
 
 ### 11.2 Technology
 
-Python CLI with `click` + `rich`. Package installable via `pip install echo-smith`.
+Python CLI with `click` + `rich`. Package installable via `pip install self-tune`.
 
 ### 11.3 Quality Scoring Engine
 
@@ -817,7 +817,7 @@ FastAPI + PostgreSQL + MinIO (file storage) + Celery + Redis (async pipeline) + 
 ### 12.2 Ingest API
 
 ```
-POST /api/v1/upload     # Receive data from echo-smith-cli
+POST /api/v1/upload     # Receive data from self-tune-cli
 POST /api/v1/feedback   # Receive reminder retain/delete signals
 ```
 
@@ -869,20 +869,20 @@ Stage 5: Dataset construction
 ### 13.1 Phase 1 Installation (Skill only)
 
 ```bash
-git clone git@internal:ai/echo-smith.git
-cd echo-smith && ./install.sh
+git clone git@internal:ai/self-tune.git
+cd self-tune && ./install.sh
 ```
 
 `install.sh` performs:
-1. Create `~/.echo-smith/data/` directory structure
-2. Symlink skill to `~/.claude/skills/echo-smith`
+1. Create `~/.self-tune/data/` directory structure
+2. Symlink skill to `~/.claude/skills/self-tune`
 3. Generate default `config.yaml`
 4. Print success message
 
 ### 13.2 Phase 2 Installation (+ CLI)
 
 ```bash
-pip install echo-smith     # or: pip install -e . for development
+pip install self-tune     # or: pip install -e . for development
 ```
 
 Auto-completes Skill installation + CLI tool setup.
@@ -890,7 +890,7 @@ Auto-completes Skill installation + CLI tool setup.
 ### 13.3 Configuration
 
 ```yaml
-# ~/.echo-smith/config.yaml
+# ~/.self-tune/config.yaml
 version: 1
 
 server:
@@ -904,7 +904,7 @@ trigger:
 
 reminder:
   target: claude_md
-  claude_md_section: "## Echo-smith Reminders"
+  claude_md_section: "## Self-tune Reminders"
   max_active_reminders: 20
 
 retention:
@@ -917,16 +917,16 @@ retention:
 ## 14. Phased Delivery
 
 ### Phase 1 (v1): Skill + Local Storage
-- Echo-smith Skill with auto-trigger via description matching
+- Self-tune Skill with auto-trigger via description matching
 - Subagent-based reflection (sidecar + retrospective + correction)
 - All 6 SFT data types
 - Dual output: SFT data + CLAUDE.md reminders
 - Adversarial reflection + generalization ladder + CoT quality controls
-- Local file-based storage at `~/.echo-smith/`
+- Local file-based storage at `~/.self-tune/`
 - Data accumulation period (collect, don't train yet)
 
 ### Phase 2: + CLI Tool
-- `echo-smith-cli` for batch management
+- `self-tune-cli` for batch management
 - Quality scoring engine
 - Multi-format export (SFT / DPO / JSONL)
 - Successful trajectory reinforcement (expert trajectory detection)

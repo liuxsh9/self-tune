@@ -1,4 +1,4 @@
-# Echo-smith Retrospective Agent
+# Self-tune Retrospective Agent
 
 You are a background agent performing a full-session review after task completion.
 All outputs are written to files. Keep your work silent.
@@ -127,6 +127,13 @@ Transform the user's wisdom into the model's own reasoning in the CoT:
   that were not in any tool output — REJECT
 - Content-free hedging: "Let me carefully analyze..." without analysis — REVISE
 - Over-explaining basics: "package.json is a Node.js config file..." — REMOVE
+- Fabricated execution: response must NEVER contain hypothetical tool outputs,
+  imagined results, or narrated multi-step execution — REJECT entire sample
+
+**Response and action rules:**
+- When the correct move is a tool call: set `action` (e.g., `{"tool": "Bash", "input": "date"}`),
+  set `response` to a brief intent description. Do NOT narrate execution beyond the first action.
+- When the correct move is a direct reply: set `action` to null, set `response` to the ideal message.
 
 **Quality self-check before writing:**
 - Cover the CoT and look only at the query — can you derive the conclusion
@@ -134,20 +141,10 @@ Transform the user's wisdom into the model's own reasoning in the CoT:
 - Does every conclusion in the CoT anchor to a specific tool result?
 - Is the CoT genuinely better than what actually happened, not just a restatement?
 
-#### 2f. Reminder Generation
+#### 2f. Contradiction Check
 
-Generate a Reminder if the insight is:
-- `env_specific` (always)
-- A high-frequency pattern that benefits from immediate guidance
-- Something this user will encounter again soon
-
-Format: a CLAUDE.md-compatible section with clear, actionable guidance.
-Set status to `pending_approval` — the main skill will ask the user.
-
-#### 2g. Contradiction Check
-
-Read `~/.echo-smith/index.json` to see existing data counts.
-If there are existing insights, scan `~/.echo-smith/data/insights/` for
+Read `~/.self-tune/index.json` to see existing data counts.
+If there are existing insights, scan `~/.self-tune/data/insights/` for
 potential contradictions with the new insight.
 
 If a contradiction is found:
@@ -172,9 +169,9 @@ Before writing, verify:
 - ID format: `{prefix}-{YYYYMMDD}-{random_6_hex}`
 - JSON is syntactically valid
 
-Write all generated data to `~/.echo-smith/data/`. Update `~/.echo-smith/index.json`.
+Write all generated data to `~/.self-tune/data/`. Update `~/.self-tune/index.json`.
 
-Report summary: "Retrospective: found N episodes, generated M insights, K SFT samples, J reminder candidates."
+Report summary: "Retrospective: found N episodes, generated M insights, K SFT samples."
 
 ## Output Reference
 
@@ -187,13 +184,26 @@ Report summary: "Retrospective: found N episodes, generated M insights, K SFT sa
   `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`
 - CorrectionAction: `supersede`, `amend`, `retract`
 - AdversarialVerdict: `high_confidence`, `moderate`, `contested`
-- GeneralizationLevel: `L1`, `L2`, `L3`
-- ReminderStatus: `pending_approval`, `approved`, `active`, `expired`, `rejected`
-- ReminderScope: `global`, `project`, `language`
-- ID prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
+- ID prefixes: `trace`, `ins`, `sft`, `cor`
 
 **File locations:**
-- Insights: `~/.echo-smith/data/insights/{ins-id}.json`
-- SFT Samples: `~/.echo-smith/data/samples/{sft-id}.json`
-- Reminders: `~/.echo-smith/data/reminders/{rem-id}.json`
-- Corrections: `~/.echo-smith/data/corrections/{cor-id}.json`
+- Insights: `~/.self-tune/data/insights/{ins-id}.json`
+- SFT Samples: `~/.self-tune/data/samples/{sft-id}.json`
+- Corrections: `~/.self-tune/data/corrections/{cor-id}.json`
+
+**Correction record template:**
+```json
+{
+  "id": "cor-YYYYMMDD-XXXXXX",
+  "created_at": "ISO8601",
+  "target_type": "insight",
+  "target_id": "ins-YYYYMMDD-XXXXXX",
+  "action": "retract|supersede|amend",
+  "reason": "Why the original insight is wrong",
+  "new_insight_id": "ins-YYYYMMDD-XXXXXX or null",
+  "lesson": {
+    "abstract": "What this correction itself teaches",
+    "generates_new_sample": false
+  }
+}
+```

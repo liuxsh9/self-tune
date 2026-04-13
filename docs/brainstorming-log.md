@@ -1,4 +1,4 @@
-# Echo-smith Brainstorming Log
+# Self-tune Brainstorming Log
 
 > 从零开始的完整思考记录。记录了每一个创意的来源、讨论过程和决策理由。
 
@@ -123,14 +123,14 @@
 2. 任务完成后全过程回顾
 
 ### 5.3 最终触发方案
-**核心发现（来自用户提问）：** superpowers 的 brainstorming skill 不是手动触发的，而是模型通过 skill description 自动匹配的。Echo-smith 完全可以复用这个机制。
+**核心发现（来自用户提问）：** superpowers 的 brainstorming skill 不是手动触发的，而是模型通过 skill description 自动匹配的。Self-tune 完全可以复用这个机制。
 
 → CLAUDE.md 中只需极少配置，触发逻辑由 Skill description 驱动自动匹配。
 
 ### 5.4 三种触发时机
 - **Sidecar 模式**：过程中检测到转折点 → spawn background agent → 主工作流不阻塞
 - **Retrospective 模式**：任务完成后 → background agent 做全过程回顾
-- **Manual 模式**：用户主动调用 /echo-smith（保留但不依赖）
+- **Manual 模式**：用户主动调用 /self-tune（保留但不依赖）
 
 ### 5.5 失败任务和错误修正处理
 **用户的关键补充：** "最后失败了也不代表中间的经验都是没价值的"

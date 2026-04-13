@@ -1,22 +1,21 @@
-# Echo-smith Output Schema
+# Self-tune Output Schema
 
-> This schema is generated from `cli/echo_smith/models.py`. If in doubt, models.py is the source of truth.
+> This schema is generated from `cli/self_tune/models.py`. If in doubt, models.py is the source of truth.
 
-All outputs are JSON files written to `~/.echo-smith/data/`.
+All outputs are JSON files written to `~/.self-tune/data/`.
 
 ## File Locations
 
-- Traces: `~/.echo-smith/data/traces/{trace-id}.json`
-- Insights: `~/.echo-smith/data/insights/{insight-id}.json`
-- SFT Samples: `~/.echo-smith/data/samples/{sft-id}.json`
-- Reminders: `~/.echo-smith/data/reminders/{rem-id}.json`
-- Corrections: `~/.echo-smith/data/corrections/{cor-id}.json`
+- Traces: `~/.self-tune/data/traces/{trace-id}.json`
+- Insights: `~/.self-tune/data/insights/{insight-id}.json`
+- SFT Samples: `~/.self-tune/data/samples/{sft-id}.json`
+- Corrections: `~/.self-tune/data/corrections/{cor-id}.json`
 
 ## ID Format
 
 `{type_prefix}-{YYYYMMDD}-{random_6_hex}`
 
-Prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
+Prefixes: `trace`, `ins`, `sft`, `cor`
 
 Example: `ins-20260410-a3f2c1`
 
@@ -29,8 +28,6 @@ Example: `ins-20260410-a3f2c1`
 | `SFTType` | `user_prompt_internalization` `exploration_compression` `error_correction` `preference_to_inquiry` `backtrack_decision` `tool_orchestration` |
 | `CorrectionType` | `genuine_improvement` `stylistic_preference` `factual_error` |
 | `CorrectionAction` | `supersede` `amend` `retract` |
-| `ReminderStatus` | `pending_approval` `approved` `active` `expired` `rejected` |
-| `ReminderScope` | `global` `project` `language` |
 | `TriggerMode` | `auto` `manual` `scheduled` `sidecar` `retrospective` `user_correction` |
 | `TaskOutcome` | `success` `success_after_correction` `partial` `failure` `abandoned` |
 | `GeneralizationLevel` | `L1` `L2` `L3` |
@@ -116,6 +113,7 @@ Example: `ins-20260410-a3f2c1`
 {
   "id": "sft-YYYYMMDD-XXXXXX",
   "insight_id": "ins-YYYYMMDD-XXXXXX",
+  "trace_id": "trace-YYYYMMDD-XXXXXX",
   "created_at": "ISO8601",
   "version": "concrete|abstract",
   "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration",
@@ -127,7 +125,8 @@ Example: `ins-20260410-a3f2c1`
     "decision_point": "Description of what the model faces at this moment"
   },
   "cot": "Improved chain-of-thought reasoning",
-  "response": "Ideal action/output",
+  "response": "Brief intent description — what the action achieves",
+  "action": {"tool": "Bash", "input": "date"},
   "quality": {
     "local_score": 0.9,
     "server_score": null,
@@ -150,35 +149,13 @@ When `dpo_rejected_available` is `true`, `dpo_rejected` is populated:
 }
 ```
 
-## Reminder JSON Structure
-
-```json
-{
-  "id": "rem-YYYYMMDD-XXXXXX",
-  "insight_id": "ins-YYYYMMDD-XXXXXX",
-  "created_at": "ISO8601",
-  "status": "pending_approval|approved|active|expired|rejected",
-  "rule": "Plain-text rule description",
-  "claude_md_text": "Markdown-formatted text for CLAUDE.md",
-  "lifecycle": {
-    "validation_count": 0,
-    "contradiction_count": 0,
-    "last_validated": null,
-    "confidence": 0.7,
-    "written_to_claude_md": false,
-    "user_approved": false
-  },
-  "scope": "global|project|language"
-}
-```
-
 ## Correction JSON Structure
 
 ```json
 {
   "id": "cor-YYYYMMDD-XXXXXX",
   "created_at": "ISO8601",
-  "target_type": "insight|sft|reminder",
+  "target_type": "insight|sft",
   "target_id": "ins-YYYYMMDD-XXXXXX",
   "action": "supersede|amend|retract",
   "reason": "Why this correction is being made",

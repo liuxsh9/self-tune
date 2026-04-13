@@ -1,5 +1,5 @@
-# cli/echo_smith/export.py
-"""Multi-format export for Echo-smith SFT data."""
+# cli/self_tune/export.py
+"""Multi-format export for Self-tune SFT data."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from .store import EchoSmithStore
-from .models import SFTSample, ConversationMessage
+from .store import SelfTuneStore
+from .models import SFTSample, ConversationMessage, SFTAction
 
 # Tool definitions for agentic coding assistant context.
 # These match Claude Code's actual tool set and are included in each
@@ -118,8 +118,43 @@ AGENTIC_TOOLS = [
     },
 ]
 
+VALID_TOOL_NAMES = {t["function"]["name"] for t in AGENTIC_TOOLS}
 
-def export_sft(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+
+class ExportValidationError(ValueError):
+    """Raised when an SFT sample fails export validation."""
+
+
+def _validate_sample(sample: SFTSample) -> None:
+    """Validate SFT sample before export. Raises ExportValidationError on failure."""
+    # 1. action.tool must be a known agentic tool
+    if sample.action and sample.action.tool not in VALID_TOOL_NAMES:
+        raise ExportValidationError(
+            f"Sample {sample.id}: action.tool '{sample.action.tool}' not in "
+            f"valid tools {sorted(VALID_TOOL_NAMES)}"
+        )
+
+    # 2. Must have a training target — either response text or action
+    if not sample.response.strip() and sample.action is None:
+        raise ExportValidationError(
+            f"Sample {sample.id}: empty response with no action — "
+            f"no training target"
+        )
+
+    # 3. Conversation history role transitions must be valid
+    #    No consecutive user-user or assistant-assistant (tool can repeat)
+    history = sample.query.conversation_history
+    for i in range(1, len(history)):
+        prev_role = history[i - 1].role
+        curr_role = history[i].role
+        if prev_role == curr_role and curr_role in ("user", "assistant"):
+            raise ExportValidationError(
+                f"Sample {sample.id}: consecutive '{curr_role}' messages "
+                f"at positions {i - 1} and {i}"
+            )
+
+
+def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
     """Export SFT samples in OpenAI chat fine-tuning format (JSONL).
 
     Format follows OpenAI's supervised fine-tuning spec:
@@ -132,12 +167,13 @@ def export_sft(store: EchoSmithStore, output: Path, min_score: Optional[float] =
     samples = _filter(store.list_samples(), min_score)
     with output.open("w") as f:
         for sample in samples:
+            _validate_sample(sample)
             example = _to_openai_sft(sample)
             f.write(json.dumps(example, ensure_ascii=False) + "\n")
     return len(samples)
 
 
-def export_dpo(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+def export_dpo(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
     """Export DPO pairs in prompt/chosen/rejected format."""
     samples = _filter(store.list_samples(), min_score)
     with output.open("w") as f:
@@ -147,7 +183,7 @@ def export_dpo(store: EchoSmithStore, output: Path, min_score: Optional[float] =
     return len(samples)
 
 
-def export_jsonl(store: EchoSmithStore, output: Path, min_score: Optional[float] = None) -> int:
+def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
     """Export raw SFT sample objects as JSONL."""
     samples = _filter(store.list_samples(), min_score)
     with output.open("w") as f:
@@ -226,15 +262,36 @@ def _to_openai_sft(sample: SFTSample) -> dict:
             })
 
     # Final assistant turn: the training target (weight:1)
-    messages.append({
-        "role": "assistant",
-        "content": f"<think>\n{sample.cot}\n</think>\n\n{sample.response}",
-        "weight": 1,
-    })
+    # When action is present, emit CoT as content + tool_calls as the action.
+    # When action is absent, emit CoT + response as plain text (fallback).
+    if sample.action:
+        call_counter += 1
+        call_id = f"call_{call_counter}"
+        arguments = json.dumps({"command": sample.action.input}, ensure_ascii=False)
+        final_msg: dict = {
+            "role": "assistant",
+            "content": f"<think>\n{sample.cot}\n</think>",
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": sample.action.tool,
+                    "arguments": arguments,
+                },
+            }],
+            "weight": 1,
+        }
+    else:
+        final_msg = {
+            "role": "assistant",
+            "content": f"<think>\n{sample.cot}\n</think>\n\n{sample.response}",
+            "weight": 1,
+        }
+    messages.append(final_msg)
 
     example: dict = {"messages": messages}
 
-    # Include tools array if any tool interactions exist
+    # Include tools array if any tool interactions exist (context or action)
     if call_counter > 0:
         example["tools"] = AGENTIC_TOOLS
         example["parallel_tool_calls"] = False

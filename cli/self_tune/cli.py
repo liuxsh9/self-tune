@@ -1,5 +1,5 @@
-# cli/echo_smith/cli.py
-"""Echo-smith CLI entry point."""
+# cli/self_tune/cli.py
+"""Self-tune CLI entry point."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from .store import EchoSmithStore
+from .store import SelfTuneStore
 from .export import export_sft, export_dpo, export_jsonl
 
 console = Console()
-DEFAULT_ROOT = Path.home() / ".echo-smith"
+DEFAULT_ROOT = Path.home() / ".self-tune"
 
 
-def _store() -> EchoSmithStore:
-    store = EchoSmithStore(DEFAULT_ROOT)
+def _store() -> SelfTuneStore:
+    store = SelfTuneStore(DEFAULT_ROOT)
     if not (DEFAULT_ROOT / "data").exists():
         console.print("[yellow]No data directory found. Run install.sh first.[/yellow]")
         raise SystemExit(1)
@@ -26,7 +26,7 @@ def _store() -> EchoSmithStore:
 
 @click.group()
 def main():
-    """Echo-smith: Extract learning experiences from AI coding interactions."""
+    """Self-tune: Extract learning experiences from AI coding interactions."""
     pass
 
 
@@ -35,7 +35,7 @@ def stats():
     """Show local data statistics."""
     store = _store()
     s = store.stats()
-    table = Table(title="Echo-smith Local Data")
+    table = Table(title="Self-tune Local Data")
     table.add_column("Type", style="cyan")
     table.add_column("Count", justify="right", style="green")
     for key, val in s.items():
@@ -45,7 +45,7 @@ def stats():
 
 
 @main.command(name="list")
-@click.option("--type", "item_type", type=click.Choice(["insights", "samples", "reminders", "traces", "corrections"]), default="insights")
+@click.option("--type", "item_type", type=click.Choice(["insights", "samples", "traces", "corrections"]), default="insights")
 @click.option("--limit", default=20, help="Max items to show")
 def list_items(item_type: str, limit: int):
     """List stored items."""
@@ -81,7 +81,6 @@ def show(item_id: str):
         "trace": store.load_trace,
         "ins": store.load_insight,
         "sft": store.load_sample,
-        "rem": store.load_reminder,
         "cor": store.load_correction,
     }
     loader = loaders.get(prefix)
@@ -94,7 +93,7 @@ def show(item_id: str):
 
 @main.command()
 @click.option("--format", "fmt", type=click.Choice(["sft", "dpo", "jsonl"]), default="sft")
-@click.option("--output", "-o", type=click.Path(), default="echo-smith-export.jsonl")
+@click.option("--output", "-o", type=click.Path(), default="self-tune-export.jsonl")
 @click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
 def export(fmt: str, output: str, min_score: float | None):
     """Export SFT training data."""

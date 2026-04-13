@@ -1,4 +1,4 @@
-"""Echo-smith data models.
+"""Self-tune data models.
 
 Defines the core data contract between the Skill (data producer)
 and the CLI (data consumer). All models use Pydantic v2.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -59,13 +59,6 @@ class CorrectionAction(str, Enum):
     retract = "retract"
 
 
-class ReminderStatus(str, Enum):
-    pending_approval = "pending_approval"
-    approved = "approved"
-    active = "active"
-    expired = "expired"
-    rejected = "rejected"
-
 
 class CorrectionType(str, Enum):
     genuine_improvement = "genuine_improvement"
@@ -95,19 +88,6 @@ class GeneralizationLevel(str, Enum):
     L2 = "L2"
     L3 = "L3"
 
-
-class ReminderScope(str, Enum):
-    global_ = "global"
-    project = "project"
-    language = "language"
-
-    # Allow "global" as a value even though it's a Python keyword
-    @classmethod
-    def _missing_(cls, value: object) -> Optional[ReminderScope]:
-        for member in cls:
-            if member.value == value:
-                return member
-        return None
 
 
 class AdversarialVerdict(str, Enum):
@@ -207,14 +187,6 @@ class SFTQuery(BaseModel):
     decision_point: str
 
 
-class ReminderLifecycle(BaseModel):
-    validation_count: int = 0
-    contradiction_count: int = 0
-    last_validated: Optional[datetime] = None
-    confidence: float = Field(ge=0, le=1)
-    written_to_claude_md: bool = False
-    user_approved: bool = False
-
 
 class CorrectionLesson(BaseModel):
     abstract: str
@@ -253,6 +225,12 @@ class Insight(BaseModel):
     quality: QualityScore
 
 
+class SFTAction(BaseModel):
+    """The correct tool call the model should make at the decision point."""
+    tool: str
+    input: str
+
+
 class DPORejected(BaseModel):
     response: str
     failure_mode: str
@@ -261,26 +239,17 @@ class DPORejected(BaseModel):
 class SFTSample(BaseModel):
     id: str
     insight_id: str
+    trace_id: Optional[str] = None
     created_at: datetime
-    version: str
+    version: Literal["concrete", "abstract"]
     sft_type: SFTType
     query: SFTQuery
     cot: str
     response: str
+    action: Optional[SFTAction] = None
     quality: SFTQualityScore
     dpo_rejected_available: bool = False
     dpo_rejected: Optional[DPORejected] = None
-
-
-class Reminder(BaseModel):
-    id: str
-    insight_id: str
-    created_at: datetime
-    status: ReminderStatus
-    rule: str
-    claude_md_text: str
-    lifecycle: ReminderLifecycle
-    scope: ReminderScope
 
 
 class Correction(BaseModel):

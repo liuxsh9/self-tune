@@ -2,15 +2,17 @@
 import json
 from pathlib import Path
 
-from echo_smith.models import SFTSample, Insight
-from echo_smith.store import EchoSmithStore
-from echo_smith.export import export_sft, export_dpo, export_jsonl
+import pytest
+
+from self_tune.models import SFTSample, Insight
+from self_tune.store import SelfTuneStore
+from self_tune.export import export_sft, export_dpo, export_jsonl, ExportValidationError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _seed_store(tmp_path) -> EchoSmithStore:
-    store = EchoSmithStore(tmp_path)
+def _seed_store(tmp_path) -> SelfTuneStore:
+    store = SelfTuneStore(tmp_path)
     store.init()
     store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
     store.save_sample(SFTSample.model_validate_json((FIXTURES / "sample_sft.json").read_text()))
@@ -122,3 +124,82 @@ def test_export_with_score_filter(tmp_path):
     count = export_sft(store, output, min_score=0.99)
     assert count == 0
     assert output.read_text().strip() == ""
+
+
+def test_export_sft_action_as_tool_call(tmp_path):
+    """When SFT sample has action field, weight:1 turn emits tool_calls."""
+    store = _seed_store(tmp_path)
+
+    # Create a sample with action field
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-action"
+    sft_data["action"] = {"tool": "Bash", "input": "date"}
+    sft_data["response"] = "Check current time before scheduling"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+
+    # Find the action sample (sorted by ID, "action" < "g7h8i9" so it's first)
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 2
+    action_line = json.loads(lines[0])
+    messages = action_line["messages"]
+
+    # Last message should have tool_calls + weight:1
+    last = messages[-1]
+    assert last["role"] == "assistant"
+    assert last["weight"] == 1
+    assert "tool_calls" in last
+    assert last["tool_calls"][0]["function"]["name"] == "Bash"
+    assert "<think>" in last["content"]
+    # Content should NOT include the response text (it's in CoT only)
+    assert "date" in last["tool_calls"][0]["function"]["arguments"]
+
+
+def test_export_rejects_invalid_tool_name(tmp_path):
+    """Export raises ExportValidationError when action.tool is not in AGENTIC_TOOLS."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-badtool"
+    sft_data["action"] = {"tool": "MadeUpTool", "input": "foo"}
+    sft_data["response"] = "intent"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="MadeUpTool"):
+        export_sft(store, output)
+
+
+def test_export_rejects_empty_training_target(tmp_path):
+    """Export raises ExportValidationError when response is empty and action is None."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-empty"
+    sft_data["response"] = ""
+    sft_data["action"] = None
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="no training target"):
+        export_sft(store, output)
+
+
+def test_export_rejects_consecutive_same_role(tmp_path):
+    """Export raises ExportValidationError on consecutive user or assistant messages."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-badrole"
+    sft_data["query"]["conversation_history"] = [
+        {"role": "user", "content": "first question"},
+        {"role": "user", "content": "second question"},  # invalid consecutive user
+        {"role": "assistant", "content": "answer"},
+    ]
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="consecutive 'user'"):
+        export_sft(store, output)

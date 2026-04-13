@@ -1,18 +1,18 @@
-# cli/echo_smith/store.py
-"""Local file store for Echo-smith data."""
+# cli/self_tune/store.py
+"""Local file store for Self-tune data."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from .models import Trace, Insight, SFTSample, Reminder, Correction
+from .models import Trace, Insight, SFTSample, Correction
 
 
-class EchoSmithStore:
-    """Read/write Echo-smith data to ~/.echo-smith/."""
+class SelfTuneStore:
+    """Read/write Self-tune data to ~/.self-tune/."""
 
-    SUBDIRS = ("traces", "insights", "samples", "reminders", "corrections")
+    SUBDIRS = ("traces", "insights", "samples", "corrections")
 
     def __init__(self, root: Path | str):
         self.root = Path(root)
@@ -37,9 +37,6 @@ class EchoSmithStore:
     def save_sample(self, sample: SFTSample) -> Path:
         return self._save("samples", sample.id, sample)
 
-    def save_reminder(self, reminder: Reminder) -> Path:
-        return self._save("reminders", reminder.id, reminder)
-
     def save_correction(self, correction: Correction) -> Path:
         return self._save("corrections", correction.id, correction)
 
@@ -53,9 +50,6 @@ class EchoSmithStore:
 
     def load_sample(self, id_: str) -> SFTSample:
         return SFTSample.model_validate_json(self._read("samples", id_))
-
-    def load_reminder(self, id_: str) -> Reminder:
-        return Reminder.model_validate_json(self._read("reminders", id_))
 
     def load_correction(self, id_: str) -> Correction:
         return Correction.model_validate_json(self._read("corrections", id_))
@@ -71,9 +65,6 @@ class EchoSmithStore:
     def list_samples(self) -> list[SFTSample]:
         return [SFTSample.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "samples").glob("*.json"))]
 
-    def list_reminders(self) -> list[Reminder]:
-        return [Reminder.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "reminders").glob("*.json"))]
-
     def list_corrections(self) -> list[Correction]:
         return [Correction.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "corrections").glob("*.json"))]
 
@@ -85,7 +76,6 @@ class EchoSmithStore:
             "total_traces": len(list((self.data_dir / "traces").glob("*.json"))),
             "total_insights": len(list((self.data_dir / "insights").glob("*.json"))),
             "total_samples": len(list((self.data_dir / "samples").glob("*.json"))),
-            "total_reminders": len(list((self.data_dir / "reminders").glob("*.json"))),
             "total_corrections": len(list((self.data_dir / "corrections").glob("*.json"))),
         }
 
@@ -119,7 +109,6 @@ class EchoSmithStore:
                 "total_traces": 0,
                 "total_insights": 0,
                 "total_samples": 0,
-                "total_reminders": 0,
                 "total_corrections": 0,
             },
         }

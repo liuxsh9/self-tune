@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
-# install.sh — One-command Echo-smith installer
+# install.sh — One-command Self-tune installer
 set -euo pipefail
 
-ECHO_SMITH_HOME="$HOME/.echo-smith"
-SKILL_DIR="$HOME/.claude/skills/echo-smith"
+SELF_TUNE_HOME="$HOME/.self-tune"
+SKILL_DIR="$HOME/.claude/skills/self-tune"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Echo-smith Installer ==="
+echo "=== Self-tune Installer ==="
 
 # 1. Create data directory structure
 echo "Creating data directories..."
-mkdir -p "$ECHO_SMITH_HOME/data/traces"
-mkdir -p "$ECHO_SMITH_HOME/data/insights"
-mkdir -p "$ECHO_SMITH_HOME/data/samples"
-mkdir -p "$ECHO_SMITH_HOME/data/reminders"
-mkdir -p "$ECHO_SMITH_HOME/data/corrections"
+mkdir -p "$SELF_TUNE_HOME/data/traces"
+mkdir -p "$SELF_TUNE_HOME/data/insights"
+mkdir -p "$SELF_TUNE_HOME/data/samples"
+mkdir -p "$SELF_TUNE_HOME/data/corrections"
 
 # 2. Create default config if not exists
-if [ ! -f "$ECHO_SMITH_HOME/config.yaml" ]; then
+if [ ! -f "$SELF_TUNE_HOME/config.yaml" ]; then
     echo "Creating default config..."
-    cp "$SCRIPT_DIR/config.yaml.template" "$ECHO_SMITH_HOME/config.yaml"
+    cp "$SCRIPT_DIR/config.yaml.template" "$SELF_TUNE_HOME/config.yaml"
 else
     echo "Config already exists, skipping."
 fi
 
 # 3. Create index.json if not exists
-if [ ! -f "$ECHO_SMITH_HOME/index.json" ]; then
-    echo '{"last_updated": null, "stats": {"total_traces": 0, "total_insights": 0, "total_samples": 0, "total_reminders": 0, "total_corrections": 0}}' > "$ECHO_SMITH_HOME/index.json"
+if [ ! -f "$SELF_TUNE_HOME/index.json" ]; then
+    echo '{"last_updated": null, "stats": {"total_traces": 0, "total_insights": 0, "total_samples": 0, "total_corrections": 0}}' > "$SELF_TUNE_HOME/index.json"
 fi
 
 # 4. Symlink skill to Claude Code skills directory
@@ -38,8 +37,8 @@ fi
 if [ -d "$SKILL_DIR" ]; then
     echo "WARNING: $SKILL_DIR is a real directory, not a symlink. Skipping."
 else
-    ln -s "$SCRIPT_DIR/skills/echo-smith" "$SKILL_DIR"
-    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/echo-smith"
+    ln -s "$SCRIPT_DIR/skills/self-tune" "$SKILL_DIR"
+    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/self-tune"
 fi
 
 # 5. Install CLI (optional — requires Python 3.10+)
@@ -48,7 +47,7 @@ if command -v python3 &>/dev/null; then
     if python3 -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
         echo "Installing CLI tool (Python $PYTHON_VERSION)..."
         pip install -e "$SCRIPT_DIR/cli/" --quiet
-        echo "CLI installed: run 'echo-smith --help'"
+        echo "CLI installed: run 'self-tune --help'"
     else
         echo "Python $PYTHON_VERSION found but >=3.10 required. Skipping CLI install."
     fi
@@ -58,8 +57,8 @@ fi
 
 echo ""
 echo "=== Installation complete ==="
-echo "  Data:   $ECHO_SMITH_HOME/"
+echo "  Data:   $SELF_TUNE_HOME/"
 echo "  Skill:  $SKILL_DIR"
-echo "  Config: $ECHO_SMITH_HOME/config.yaml"
+echo "  Config: $SELF_TUNE_HOME/config.yaml"
 echo ""
-echo "The echo-smith skill will auto-activate in Claude Code sessions."
+echo "The self-tune skill will auto-activate in Claude Code sessions."

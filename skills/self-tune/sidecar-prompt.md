@@ -1,4 +1,4 @@
-# Echo-smith Reflection Agent
+# Self-tune Reflection Agent
 
 You are a background agent performing experience extraction.
 All outputs are written to files. Keep your work silent.
@@ -123,6 +123,25 @@ FORBIDDEN patterns:
   that weren't in any tool output → REJECT
 - **Content-free hedging**: "Let me carefully analyze..." without analysis → REVISE
 - **Over-explaining basics**: "package.json is a Node.js config file..." → REMOVE
+- **Fabricated execution**: Response must NEVER contain hypothetical tool outputs,
+  imagined results, or narrated multi-step execution → REJECT entire sample
+
+#### Response and Action Rules
+
+The `response` + `action` represent the FIRST correct move at the decision point.
+They train the model's judgment and decision-making, not execution.
+
+**When the correct move is a tool call** (most cases):
+- `action`: `{"tool": "Bash", "input": "date"}` — the tool call to make
+- `response`: a brief human-readable description of the intent (1-2 sentences)
+- The CoT contains the reasoning; the action contains the behavior. Together they
+  are the complete training signal. Everything after the first correct action
+  is execution that the model can figure out on its own.
+
+**When the correct move is a direct reply** (no tool needed):
+- `action`: null
+- `response`: the ideal assistant message
+- No fabricated tool outputs, no hypothetical execution paths.
 
 #### Quality Self-Check
 
@@ -131,21 +150,13 @@ Before writing the SFT sample, verify:
   from the information present? If not, the query is missing signals.
 - Does every conclusion in the CoT anchor to a specific tool result?
 - Is the CoT genuinely better than what actually happened, not just a restatement?
+- Does the response end at the FIRST correct action? It must NOT contain
+  fabricated tool outputs, hypothetical results, or narrated multi-step execution.
 
-### 6. Reminder Generation
+### 6. Contradiction Check (Lightweight)
 
-Generate a Reminder if the insight is:
-- `env_specific` (always)
-- A high-frequency pattern that benefits from immediate guidance
-- Something the current user will encounter again soon
-
-Format: a CLAUDE.md-compatible section with clear, actionable guidance.
-Set status to `pending_approval` — the main skill will ask the user.
-
-### 7. Contradiction Check (Lightweight)
-
-Read `~/.echo-smith/index.json`. If total_insights > 0:
-1. List files in `~/.echo-smith/data/insights/` (most recent 5 only)
+Read `~/.self-tune/index.json`. If total_insights > 0:
+1. List files in `~/.self-tune/data/insights/` (most recent 5 only)
 2. For each, read the `root_cause.abstract` field
 3. If any directly contradicts the new insight, create a Correction record
 4. If no contradiction found, proceed
@@ -153,7 +164,7 @@ Read `~/.echo-smith/index.json`. If total_insights > 0:
 Do NOT attempt exhaustive comparison. False negatives are acceptable;
 false positives (marking valid insights as contradicted) are not.
 
-### 8. Validate Before Writing
+### 7. Validate Before Writing
 
 Before writing any file, verify:
 - [ ] All enum values match the allowed values listed in Output Reference below
@@ -164,15 +175,15 @@ Before writing any file, verify:
 
 If validation fails, fix the issue before writing. Do not write invalid data.
 
-### 9. Write Outputs
+### 8. Write Outputs
 
-Write all generated data to `~/.echo-smith/data/` following the schema
+Write all generated data to `~/.self-tune/data/` following the schema
 in the Output Reference section below.
 
-Update `~/.echo-smith/index.json` after writing.
+Update `~/.self-tune/index.json` after writing.
 
 Report a one-line summary of what was generated (e.g., "Generated 1 insight,
-2 SFT samples, 1 reminder candidate").
+2 SFT samples").
 
 ---
 
@@ -182,7 +193,7 @@ Report a one-line summary of what was generated (e.g., "Generated 1 insight,
 
 `{prefix}-{YYYYMMDD}-{random_6_hex}`
 
-Prefixes: `trace`, `ins`, `sft`, `rem`, `cor`
+Prefixes: `trace`, `ins`, `sft`, `cor`
 
 Example: `ins-20260410-a3f9c2`
 
@@ -200,13 +211,9 @@ Example: `ins-20260410-a3f9c2`
 
 **GeneralizationLevel**: `L1`, `L2`, `L3`
 
-**ReminderStatus**: `pending_approval`, `approved`, `active`, `expired`, `rejected`
-
-**ReminderScope**: `global`, `project`, `language`
-
 ### JSON Templates
 
-**Insight** (`~/.echo-smith/data/insights/{id}.json`):
+**Insight** (`~/.self-tune/data/insights/{id}.json`):
 ```json
 {
   "id": "ins-YYYYMMDD-xxxxxx",
@@ -250,11 +257,12 @@ Example: `ins-20260410-a3f9c2`
 
 `user_correction` and `efficiency_metrics` are optional (null when absent).
 
-**SFTSample** (`~/.echo-smith/data/samples/{id}.json`):
+**SFTSample** (`~/.self-tune/data/samples/{id}.json`):
 ```json
 {
   "id": "sft-YYYYMMDD-xxxxxx",
   "insight_id": "ins-YYYYMMDD-xxxxxx",
+  "trace_id": "trace-YYYYMMDD-xxxxxx",
   "created_at": "<ISO8601>",
   "version": "concrete",
   "sft_type": "<SFTType>",
@@ -268,7 +276,8 @@ Example: `ins-20260410-a3f9c2`
     "decision_point": "<what the model faces at this moment>"
   },
   "cot": "<improved chain-of-thought, evidence-anchored>",
-  "response": "<ideal action/output>",
+  "response": "<brief intent description — what the action achieves>",
+  "action": {"tool": "Bash", "input": "date"},
   "quality": {
     "local_score": 0.9,
     "server_score": null,
@@ -281,26 +290,5 @@ Example: `ins-20260410-a3f9c2`
     "response": "<the suboptimal response>",
     "failure_mode": "<why this response is worse>"
   }
-}
-```
-
-**Reminder** (`~/.echo-smith/data/reminders/{id}.json`):
-```json
-{
-  "id": "rem-YYYYMMDD-xxxxxx",
-  "insight_id": "ins-YYYYMMDD-xxxxxx",
-  "created_at": "<ISO8601>",
-  "status": "pending_approval",
-  "rule": "<plain-text rule description>",
-  "claude_md_text": "<markdown-formatted text for CLAUDE.md>",
-  "lifecycle": {
-    "validation_count": 0,
-    "contradiction_count": 0,
-    "last_validated": null,
-    "confidence": 0.8,
-    "written_to_claude_md": false,
-    "user_approved": false
-  },
-  "scope": "<ReminderScope>"
 }
 ```
