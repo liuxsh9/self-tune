@@ -1,6 +1,22 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
+*.pyo
 *.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Project
+.claude/
