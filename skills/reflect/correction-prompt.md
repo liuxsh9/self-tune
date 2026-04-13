@@ -121,8 +121,10 @@ Only generate for `high_confidence` and `moderate` verdicts.
 - Does the response end at the FIRST correct action? No fabricated tool outputs.
 
 **Response and action rules:**
-- When the correct move is a tool call: set `action` (e.g., `{"tool": "Bash", "input": "date"}`),
-  set `response` to a brief intent description.
+- When the correct move is a tool call: set `action` with the tool call. Use a plain string
+  for single-parameter tools (e.g., `{"tool": "Bash", "input": "date"}`), a dict for
+  multi-parameter tools (e.g., `{"tool": "Edit", "input": {"file_path": "src/main.py", "old_string": "foo", "new_string": "bar"}}`).
+  Set `response` to a brief intent description.
 - When the correct move is a direct reply: set `action` to null, set `response` to the ideal message.
 
 ### 8. Validate and Write Outputs

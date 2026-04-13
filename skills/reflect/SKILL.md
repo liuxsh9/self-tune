@@ -1,5 +1,5 @@
 ---
-name: self-tune
+name: reflect
 description: >
   Use when the user corrects the agent's approach or provides
   a hint that changes direction, when the agent retried or
@@ -7,7 +7,7 @@ description: >
   discovers a previous solution was wrong, or when a task
   succeeded but took significantly more rounds than necessary.
   Do not use when the task proceeds smoothly AND efficiently.
-  May be auto-triggered by the Self-tune sentinel in CLAUDE.md.
+  May be auto-triggered by the reflect sentinel in CLAUDE.md.
 ---
 
 # Self-tune: Experience Distillation
@@ -25,7 +25,7 @@ NEVER block or degrade the user's main workflow for reflection work.
 
 > **Auto-trigger**: The sentinel in `~/.claude/CLAUDE.md` runs a quick
 > self-check after each user request and invokes this skill automatically.
-> You may also invoke it manually if the sentinel missed an episode.
+> You may also invoke it manually (`/reflect`) if the sentinel missed an episode.
 
 Invoke this skill when ANY of these are true:
 - You retried an approach after it failed or hit a dead end
@@ -42,7 +42,7 @@ Invoke this skill when ANY of these are true:
 - The only "issue" was gathering routine requirements
 - During an active systematic-debugging session (wait until it concludes)
 - Inside a subagent (only invoke from the main conversation)
-- Already in a self-tune reflection cycle
+- Already in a reflect cycle
 - Uncertain — under-triggering is better than over-triggering
 
 ## Common Rationalizations
@@ -153,4 +153,4 @@ When the subagent completes:
 
 - Wait for `systematic-debugging` to conclude before triggering
 - Only trigger from the main conversation, never from within a subagent
-- Do not trigger during an active self-tune cycle
+- Do not trigger during an active reflect cycle

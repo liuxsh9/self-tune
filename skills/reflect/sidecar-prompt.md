@@ -149,7 +149,11 @@ The `response` + `action` represent the FIRST correct move at the decision point
 They train the model's judgment and decision-making, not execution.
 
 **When the correct move is a tool call** (most cases):
-- `action`: `{"tool": "Bash", "input": "date"}` — the tool call to make
+- `action`: the tool call to make — use a plain string for single-parameter tools,
+  a dict for multi-parameter tools:
+  - `{"tool": "Bash", "input": "date"}`
+  - `{"tool": "Read", "input": "src/main.py"}`
+  - `{"tool": "Edit", "input": {"file_path": "src/main.py", "old_string": "foo", "new_string": "bar"}}`
 - `response`: a brief human-readable description of the intent (1-2 sentences)
 - The CoT contains the reasoning; the action contains the behavior. Together they
   are the complete training signal. Everything after the first correct action
@@ -323,7 +327,8 @@ Example: `ins-20260410-a3f9c2`
     "conversation_history": [
       {"role": "user", "content": "...", "source": "verbatim"},
       {"role": "assistant", "content": "...", "source": "verbatim"},
-      {"role": "tool", "name": "Bash", "input": "...", "output": "...", "source": "reconstructed"}
+      {"role": "tool", "name": "Bash", "input": "ls -la", "output": "...", "source": "reconstructed"},
+      {"role": "tool", "name": "Edit", "input": {"file_path": "src/main.py", "old_string": "foo", "new_string": "bar"}, "output": "...", "source": "reconstructed"}
     ],
     "decision_point": "<what the model faces at this moment>"
   },

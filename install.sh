@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SELF_TUNE_HOME="$HOME/.self-tune"
-SKILL_DIR="$HOME/.claude/skills/self-tune"
+SKILL_DIR="$HOME/.claude/skills/reflect"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=== Self-tune Installer ==="
@@ -37,8 +37,8 @@ fi
 if [ -d "$SKILL_DIR" ]; then
     echo "WARNING: $SKILL_DIR is a real directory, not a symlink. Skipping."
 else
-    ln -s "$SCRIPT_DIR/skills/self-tune" "$SKILL_DIR"
-    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/self-tune"
+    ln -s "$SCRIPT_DIR/skills/reflect" "$SKILL_DIR"
+    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/reflect"
 fi
 
 # 5. Install CLI (optional — requires Python 3.10+)
@@ -61,4 +61,4 @@ echo "  Data:   $SELF_TUNE_HOME/"
 echo "  Skill:  $SKILL_DIR"
 echo "  Config: $SELF_TUNE_HOME/config.yaml"
 echo ""
-echo "The self-tune skill will auto-activate in Claude Code sessions."
+echo "The reflect skill will auto-activate in Claude Code sessions."

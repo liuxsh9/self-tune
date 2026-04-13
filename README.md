@@ -67,7 +67,7 @@ Two independent halves that share a data contract (defined in `models.py`):
 
 ```
 self-tune/
-├── skills/self-tune/          # Skill side (prompt templates)
+├── skills/reflect/            # Skill side (prompt templates)
 │   ├── SKILL.md               # Manifest + trigger criteria + dispatch protocol
 │   ├── sidecar-prompt.md      # Mid-task extraction (most common path)
 │   ├── retrospective-prompt.md  # Full-session review after completion
@@ -119,10 +119,10 @@ cd self-tune
 The installer does three things:
 
 1. **Data directory** -- creates `~/.self-tune/data/` with subdirectories for traces, insights, samples, and corrections
-2. **Skill** -- symlinks `skills/self-tune/` into `~/.claude/skills/self-tune/` so Claude Code discovers it automatically
+2. **Skill** -- symlinks `skills/reflect/` into `~/.claude/skills/reflect/` so Claude Code discovers it automatically
 3. **CLI** -- installs the `self-tune` command via pip (requires Python 3.10+; consider using a virtualenv)
 
-After installation, self-tune activates automatically in future Claude Code sessions. No configuration required.
+After installation, the reflect skill activates automatically in future Claude Code sessions. No configuration required.
 
 ## CLI Usage
 
