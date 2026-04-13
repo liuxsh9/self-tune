@@ -10,7 +10,9 @@ from rich.console import Console
 from rich.table import Table
 
 from .store import SelfTuneStore
-from .export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml
+from .export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml, export_ml2
+
+import json as _json
 
 console = Console()
 DEFAULT_ROOT = Path.home() / ".self-tune"
@@ -104,7 +106,7 @@ def show(item_id: str):
 
 
 @main.command()
-@click.option("--format", "fmt", type=click.Choice(["sft", "anthropic", "chatml", "dpo", "jsonl"]), default="sft")
+@click.option("--format", "fmt", type=click.Choice(["ml2", "sft", "anthropic", "chatml", "dpo", "jsonl"]), default="ml2")
 @click.option("--output", "-o", type=click.Path(), default="self-tune-export.jsonl")
 @click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
 @click.option("--include-pending", is_flag=True, default=False, help="Include pending (unreviewed) samples")
@@ -112,7 +114,7 @@ def export(fmt: str, output: str, min_score: float | None, include_pending: bool
     """Export SFT training data."""
     store = _store()
     output_path = Path(output)
-    exporters = {"sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "dpo": export_dpo, "jsonl": export_jsonl}
+    exporters = {"ml2": export_ml2, "sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "dpo": export_dpo, "jsonl": export_jsonl}
     count = exporters[fmt](store, output_path, min_score=min_score, include_pending=include_pending)
     if count == 0 and not include_pending:
         total = len(store.list_samples())
@@ -155,7 +157,8 @@ def review(status: str):
         # Show response + action
         console.print(f"[bold]Response:[/bold] {sample.response}")
         if sample.action:
-            console.print(f"[bold]Action:[/bold] {sample.action.tool}({sample.action.input[:100]})")
+            input_preview = _json.dumps(sample.action.input, ensure_ascii=False)[:100] if isinstance(sample.action.input, dict) else sample.action.input[:100]
+            console.print(f"[bold]Action:[/bold] {sample.action.tool}({input_preview})")
         console.print()
 
         # Quality flags
