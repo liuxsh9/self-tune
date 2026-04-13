@@ -8,7 +8,7 @@ A Claude Code skill + CLI that automatically extracts SFT training data from cod
 
 ## How It Works
 
-Self-tune runs silently alongside your normal Claude Code workflow. After each interaction, a sentinel checks whether the session contained a **learning moment** -- a retry, a user correction, a strategy change, or a discovered mistake. If the lesson is generalizable (not just a one-off fact), it dispatches a background subagent to analyze the episode.
+Self-tune runs silently alongside your normal Claude Code workflow. After each interaction, a sentinel checks whether the session contained a **learning moment** -- a retry, a user correction, a strategy change, a discovered mistake, or a task that succeeded but took far more rounds than necessary. If the lesson is generalizable (not just a one-off fact), it dispatches a background subagent to analyze the episode.
 
 The subagent produces two artifacts:
 

@@ -7,6 +7,11 @@ All outputs are written to files. Keep your work silent.
 
 Every claim in the CoT MUST be derivable from evidence in the query.
 
+## Model Tier
+
+Set `quality_tier` on all SFT samples to the value of `model_tier` from the
+Dispatch Parameters in your context package (`"standard"` or `"premium"`).
+
 ## Input Context
 
 The dispatcher will provide:
@@ -14,6 +19,8 @@ The dispatcher will provide:
 - Summary of the full session: key turning points, user interventions,
   strategy changes, notable successes
 - Project context (language, framework)
+- **Raw conversation excerpt(s)** — verbatim conversation segments for each identified
+  episode. These are the PRIMARY evidence source for building SFT queries.
 
 ## Workflow
 
@@ -103,6 +110,13 @@ is not framework-specific.
 - Include prior failed attempts (they are training signal)
 - Target query length: 1000-3000 tokens
 
+**Source priority for conversation_history (concrete samples):**
+1. Verbatim quotes from the raw conversation excerpt (preferred)
+2. Trimmed versions of raw excerpts with `[trimmed: N→M lines]` annotation
+3. NEVER reconstruct or fabricate messages not in the raw excerpt
+4. Set `source: "verbatim"` on messages taken directly from the excerpt,
+   `source: "reconstructed"` on any message you had to rephrase or trim.
+
 **Cut point rules:**
 - For `exploration_compression`: cut at T_optimal
 - For `user_prompt_internalization`: cut at T_actual (before user hint)
@@ -140,6 +154,43 @@ Transform the user's wisdom into the model's own reasoning in the CoT:
   from the information present? If not, the query is missing signals.
 - Does every conclusion in the CoT anchor to a specific tool result?
 - Is the CoT genuinely better than what actually happened, not just a restatement?
+- Is every message in `conversation_history` traceable to the raw conversation excerpt?
+  Reconstructed messages that don't appear in the excerpt must be removed.
+- Does the response end at the FIRST correct action? No fabricated tool outputs,
+  no narrated multi-step execution.
+
+#### 2e-b. Abstract Variant (Optional)
+
+If the insight's generalization ladder shows the pattern is NOT purely framework-specific
+(i.e., L2 or L3 captures a meaningfully different lesson from L1), generate a second
+SFT sample with `version: "abstract"`:
+
+1. Take the concrete sample as a starting point
+2. Replace framework-specific details in `system_context` with generic equivalents
+   (e.g., "Express.js middleware" → "web framework middleware")
+3. Replace framework-specific details in `conversation_history` messages while preserving
+   the decision-relevant structure (tool names, role flow stay the same)
+4. Rewrite `cot` to reference the abstract pattern instead of specific APIs
+5. Update `decision_point` to describe the abstract scenario
+6. Set `version: "abstract"` and use a new `sft-` ID
+7. Keep the same `insight_id` and `trace_id` as the concrete version
+
+**Abstract conversation_history rules** (these override the "NEVER reconstruct" rule
+which applies only to concrete samples):
+- The abstract variant is a **structure-preserving substitution** of the concrete one
+- Same number of turns, same roles, same decision flow — only surface labels change
+- You may NOT add, remove, or reorder turns
+- You may NOT invent new tool outputs or information not present in the concrete version
+- Set `source: "reconstructed"` on ALL messages in abstract variants
+
+**Skip the abstract variant if:**
+- L1 and L2 are essentially the same (the pattern IS framework-specific)
+- After replacing framework-specific names, the decision_point no longer maps to
+  a distinct action the model could take (the abstraction destroyed the signal)
+- The concrete sample's local_score < 0.7
+
+The abstract variant inherits the concrete sample's `quality_tier`, `review_status` ("pending"),
+and quality flags. It gets its own `local_score` assessment.
 
 #### 2f. Contradiction Check
 

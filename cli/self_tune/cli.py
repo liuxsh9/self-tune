@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .store import SelfTuneStore
-from .export import export_sft, export_dpo, export_jsonl
+from .export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml
 
 console = Console()
 DEFAULT_ROOT = Path.home() / ".self-tune"
@@ -42,6 +42,18 @@ def stats():
         label = key.replace("total_", "").replace("_", " ").title()
         table.add_row(label, str(val))
     console.print(table)
+
+    # Review status breakdown
+    samples = store.list_samples()
+    if samples:
+        review_table = Table(title="Review Status")
+        review_table.add_column("Status", style="cyan")
+        review_table.add_column("Count", justify="right", style="green")
+        from collections import Counter
+        status_counts = Counter(s.review_status for s in samples)
+        for status in ["pending", "approved", "rejected"]:
+            review_table.add_row(status, str(status_counts.get(status, 0)))
+        console.print(review_table)
 
 
 @main.command(name="list")
@@ -92,13 +104,96 @@ def show(item_id: str):
 
 
 @main.command()
-@click.option("--format", "fmt", type=click.Choice(["sft", "dpo", "jsonl"]), default="sft")
+@click.option("--format", "fmt", type=click.Choice(["sft", "anthropic", "chatml", "dpo", "jsonl"]), default="sft")
 @click.option("--output", "-o", type=click.Path(), default="self-tune-export.jsonl")
 @click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
-def export(fmt: str, output: str, min_score: float | None):
+@click.option("--include-pending", is_flag=True, default=False, help="Include pending (unreviewed) samples")
+def export(fmt: str, output: str, min_score: float | None, include_pending: bool):
     """Export SFT training data."""
     store = _store()
     output_path = Path(output)
-    exporters = {"sft": export_sft, "dpo": export_dpo, "jsonl": export_jsonl}
-    count = exporters[fmt](store, output_path, min_score=min_score)
+    exporters = {"sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "dpo": export_dpo, "jsonl": export_jsonl}
+    count = exporters[fmt](store, output_path, min_score=min_score, include_pending=include_pending)
+    if count == 0 and not include_pending:
+        total = len(store.list_samples())
+        if total > 0:
+            console.print(f"[yellow]Note: {total} sample(s) exist but none are approved. "
+                          f"Use --include-pending or run `self-tune review` first.[/yellow]")
     console.print(f"[green]Exported {count} samples to {output_path} ({fmt} format)[/green]")
+
+
+@main.command()
+@click.option("--status", type=click.Choice(["pending", "approved", "rejected"]), default="pending", help="Filter by review status")
+def review(status: str):
+    """Review SFT samples interactively."""
+    store = _store()
+    samples = [s for s in store.list_samples() if s.review_status == status]
+    if not samples:
+        console.print(f"[dim]No {status} samples to review.[/dim]")
+        return
+
+    console.print(f"[bold]{len(samples)} {status} sample(s) to review[/bold]\n")
+
+    approved = 0
+    rejected = 0
+    skipped = 0
+
+    for i, sample in enumerate(samples, 1):
+        console.rule(f"[bold cyan]Sample {i}/{len(samples)}: {sample.id}[/bold cyan]")
+        console.print(f"  Type: [yellow]{sample.sft_type.value}[/yellow]")
+        console.print(f"  Insight: {sample.insight_id}")
+        console.print(f"  Quality: {sample.quality.local_score}")
+        console.print(f"  Decision point: {sample.query.decision_point}")
+        console.print()
+
+        # Show CoT (truncated if long)
+        cot_preview = sample.cot[:500] + "..." if len(sample.cot) > 500 else sample.cot
+        console.print("[bold]CoT:[/bold]")
+        console.print(f"  {cot_preview}")
+        console.print()
+
+        # Show response + action
+        console.print(f"[bold]Response:[/bold] {sample.response}")
+        if sample.action:
+            console.print(f"[bold]Action:[/bold] {sample.action.tool}({sample.action.input[:100]})")
+        console.print()
+
+        # Quality flags
+        flags = []
+        if sample.quality.evidence_anchored is False:
+            flags.append("[red]NOT evidence-anchored[/red]")
+        if sample.quality.no_post_hoc_rationalization is False:
+            flags.append("[red]has post-hoc rationalization[/red]")
+        if flags:
+            console.print("  ".join(flags))
+            console.print()
+
+        choice = click.prompt(
+            "  [a]pprove / [r]eject / [s]kip / [f]ull detail / [q]uit",
+            type=click.Choice(["a", "r", "s", "f", "q"], case_sensitive=False),
+            default="s",
+        )
+
+        if choice == "f":
+            console.print_json(sample.model_dump_json(indent=2))
+            choice = click.prompt(
+                "  [a]pprove / [r]eject / [s]kip / [q]uit",
+                type=click.Choice(["a", "r", "s", "q"], case_sensitive=False),
+                default="s",
+            )
+
+        if choice == "a":
+            store.update_sample(sample.id, review_status="approved")
+            approved += 1
+            console.print("  [green]Approved[/green]")
+        elif choice == "r":
+            store.update_sample(sample.id, review_status="rejected")
+            rejected += 1
+            console.print("  [red]Rejected[/red]")
+        elif choice == "q":
+            console.print("[dim]Review session ended.[/dim]")
+            break
+        else:
+            skipped += 1
+
+    console.print(f"\n[bold]Review summary:[/bold] {approved} approved, {rejected} rejected, {skipped} skipped")

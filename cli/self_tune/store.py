@@ -40,6 +40,15 @@ class SelfTuneStore:
     def save_correction(self, correction: Correction) -> Path:
         return self._save("corrections", correction.id, correction)
 
+    def update_sample(self, sample_id: str, **updates) -> SFTSample:
+        """Update fields on an existing SFT sample."""
+        sample = self.load_sample(sample_id)
+        data = sample.model_dump()
+        data.update(updates)
+        updated = SFTSample.model_validate(data)
+        self._save("samples", updated.id, updated)
+        return updated
+
     # --- Load ---
 
     def load_trace(self, id_: str) -> Trace:

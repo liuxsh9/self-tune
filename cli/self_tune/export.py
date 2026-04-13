@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -154,7 +155,7 @@ def _validate_sample(sample: SFTSample) -> None:
             )
 
 
-def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
+def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
     """Export SFT samples in OpenAI chat fine-tuning format (JSONL).
 
     Format follows OpenAI's supervised fine-tuning spec:
@@ -164,7 +165,7 @@ def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     - weight:0 on context messages (only train on final assistant turn)
     - tools array defining available functions
     """
-    samples = _filter(store.list_samples(), min_score)
+    samples = _filter(store.list_samples(), min_score, include_pending)
     with output.open("w") as f:
         for sample in samples:
             _validate_sample(sample)
@@ -173,9 +174,9 @@ def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     return len(samples)
 
 
-def export_dpo(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
+def export_dpo(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
     """Export DPO pairs in prompt/chosen/rejected format."""
-    samples = _filter(store.list_samples(), min_score)
+    samples = _filter(store.list_samples(), min_score, include_pending)
     with output.open("w") as f:
         for sample in samples:
             pair = _to_dpo_pair(sample)
@@ -183,19 +184,24 @@ def export_dpo(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     return len(samples)
 
 
-def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None) -> int:
+def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
     """Export raw SFT sample objects as JSONL."""
-    samples = _filter(store.list_samples(), min_score)
+    samples = _filter(store.list_samples(), min_score, include_pending)
     with output.open("w") as f:
         for sample in samples:
             f.write(sample.model_dump_json() + "\n")
     return len(samples)
 
 
-def _filter(samples: list[SFTSample], min_score: Optional[float]) -> list[SFTSample]:
-    if min_score is None:
-        return samples
-    return [s for s in samples if (s.quality.local_score or 0) >= min_score]
+def _filter(samples: list[SFTSample], min_score: Optional[float], include_pending: bool = False) -> list[SFTSample]:
+    result = samples
+    if include_pending:
+        result = [s for s in result if s.review_status in ("approved", "pending")]
+    else:
+        result = [s for s in result if s.review_status == "approved"]
+    if min_score is not None:
+        result = [s for s in result if (s.quality.local_score or 0) >= min_score]
+    return result
 
 
 def _to_openai_sft(sample: SFTSample) -> dict:
@@ -318,3 +324,167 @@ def _to_dpo_pair(sample: SFTSample) -> dict:
         rejected = "[original trajectory not stored — link to Trace for full rejected path]"
 
     return {"prompt": prompt, "chosen": chosen, "rejected": rejected}
+
+
+def _to_anthropic_sft(sample: SFTSample) -> dict:
+    """Convert SFT sample to Anthropic Messages API fine-tuning format.
+
+    Anthropic requires strict user/assistant alternation. Consecutive tool
+    messages are merged into a single assistant (tool_use) + user (tool_result)
+    turn pair to maintain alternation.
+    """
+    messages = []
+    has_tools = False
+
+    # Build messages maintaining strict user/assistant alternation.
+    # When an assistant text message is followed by tool messages, merge
+    # the text into the same assistant turn as the tool_use blocks.
+    history = sample.query.conversation_history
+    i = 0
+    while i < len(history):
+        msg = history[i]
+        if msg.role == "tool":
+            has_tools = True
+            # Gather consecutive tool messages into one turn pair
+            tool_uses: list[dict] = []
+            tool_results: list[dict] = []
+            while i < len(history) and history[i].role == "tool":
+                m = history[i]
+                tool_use_id = f"toolu_{secrets.token_hex(12)}"
+                tool_uses.append({
+                    "type": "tool_use",
+                    "id": tool_use_id,
+                    "name": m.name or "Bash",
+                    "input": {"command": m.input} if m.input else {},
+                })
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": m.output or "",
+                })
+                i += 1
+
+            # If previous message is assistant text, merge tool_use into it
+            # to avoid consecutive assistant messages.
+            if messages and messages[-1]["role"] == "assistant" and isinstance(messages[-1]["content"], str):
+                prev = messages.pop()
+                assistant_content: list[dict] = [{"type": "text", "text": prev["content"]}]
+                assistant_content.extend(tool_uses)
+                messages.append({"role": "assistant", "content": assistant_content})
+            else:
+                messages.append({"role": "assistant", "content": tool_uses})
+            messages.append({"role": "user", "content": tool_results})
+        elif msg.role == "user":
+            messages.append({"role": "user", "content": msg.content or ""})
+            i += 1
+        elif msg.role == "assistant":
+            messages.append({"role": "assistant", "content": msg.content or ""})
+            i += 1
+        else:
+            i += 1
+
+    # Final assistant turn: CoT in thinking block + action as tool_use
+    if sample.action:
+        has_tools = True
+        tool_use_id = f"toolu_{secrets.token_hex(12)}"
+        final_content = [
+            {"type": "thinking", "thinking": sample.cot},
+            {
+                "type": "tool_use",
+                "id": tool_use_id,
+                "name": sample.action.tool,
+                "input": {"command": sample.action.input},
+            },
+        ]
+    else:
+        final_content = [
+            {"type": "thinking", "thinking": sample.cot},
+            {"type": "text", "text": sample.response},
+        ]
+    messages.append({"role": "assistant", "content": final_content})
+
+    result: dict = {
+        "system": sample.query.system_context,
+        "messages": messages,
+    }
+
+    # Include Anthropic-style tool definitions when tool interactions exist
+    if has_tools:
+        result["tools"] = [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "input_schema": t["function"]["parameters"],
+            }
+            for t in AGENTIC_TOOLS
+        ]
+
+    return result
+
+
+def _to_chatml_sft(sample: SFTSample) -> dict:
+    """Convert SFT sample to generic ChatML format for open-source models."""
+    messages = []
+
+    messages.append({"role": "system", "content": sample.query.system_context})
+
+    for msg in sample.query.conversation_history:
+        if msg.role == "tool":
+            # ChatML: tool calls as assistant function_call + function response
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "function_call": {
+                    "name": msg.name or "Bash",
+                    "arguments": json.dumps({"command": msg.input} if msg.input else {}),
+                },
+            })
+            messages.append({
+                "role": "function",
+                "name": msg.name or "Bash",
+                "content": msg.output or "",
+            })
+        elif msg.role == "user":
+            messages.append({"role": "user", "content": msg.content or ""})
+        elif msg.role == "assistant":
+            messages.append({"role": "assistant", "content": msg.content or ""})
+
+    # Final assistant turn
+    if sample.action:
+        messages.append({
+            "role": "assistant",
+            "content": f"<think>\n{sample.cot}\n</think>",
+            "function_call": {
+                "name": sample.action.tool,
+                "arguments": json.dumps({"command": sample.action.input}),
+            },
+        })
+    else:
+        messages.append({
+            "role": "assistant",
+            "content": f"<think>\n{sample.cot}\n</think>\n\n{sample.response}",
+        })
+
+    return {"messages": messages}
+
+
+def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+    """Export SFT samples in Anthropic Messages API format (JSONL)."""
+    samples = _filter(store.list_samples(), min_score, include_pending)
+    with output.open("w") as f:
+        for sample in samples:
+            _validate_sample(sample)
+            example = _to_anthropic_sft(sample)
+            f.write(json.dumps(example, ensure_ascii=False) + "\n")
+    return len(samples)
+
+
+def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+    """Export SFT samples in ChatML format for open-source models (JSONL)."""
+    samples = _filter(store.list_samples(), min_score, include_pending)
+    with output.open("w") as f:
+        for sample in samples:
+            _validate_sample(sample)
+            example = _to_chatml_sft(sample)
+            f.write(json.dumps(example, ensure_ascii=False) + "\n")
+    return len(samples)

@@ -3,9 +3,10 @@ name: self-tune
 description: >
   Use when the user corrects the agent's approach or provides
   a hint that changes direction, when the agent retried or
-  changed strategy after something failed, or when the agent
-  discovers a previous solution was wrong. Do not use when
-  the task is proceeding smoothly without friction.
+  changed strategy after something failed, when the agent
+  discovers a previous solution was wrong, or when a task
+  succeeded but took significantly more rounds than necessary.
+  Do not use when the task proceeds smoothly AND efficiently.
   May be auto-triggered by the Self-tune sentinel in CLAUDE.md.
 ---
 
@@ -32,10 +33,12 @@ Invoke this skill when ANY of these are true:
 - You changed strategy after realizing your approach was wrong
 - The user provided a key hint that unblocked progress
 - You discover that a previous solution was actually incorrect
+- A task completed successfully but took significantly more rounds than necessary
+  (e.g., 8+ tool calls for something achievable in 2-3)
 
 ## When NOT to Invoke
 
-- The task proceeded smoothly without notable friction
+- The task proceeded smoothly, efficiently, and without notable friction
 - The only "issue" was gathering routine requirements
 - During an active systematic-debugging session (wait until it concludes)
 - Inside a subagent (only invoke from the main conversation)
@@ -54,6 +57,7 @@ These are traps. Recognize them and proceed anyway.
 | "Let me finish the task first, then reflect" | Use sidecar mode — reflection runs in background, doesn't block. |
 | "I already know this pattern" | If you knew it, you wouldn't have failed. Your knowledge and behavior are different things. |
 | "This is too project-specific to generalize" | Use L1 (most specific) generalization level. The specificity itself is valuable for SFT. |
+| "The task succeeded, so there's nothing to learn" | Success doesn't mean efficiency. If you took 8 rounds for a 2-round task, that's training signal. |
 
 ## Cost Assessment
 
@@ -81,8 +85,9 @@ Construct a structured context block for the subagent. Use this exact template:
 [One sentence: what you were trying to accomplish]
 
 ## Episode
-**What went wrong:** [Describe the incorrect approach or inefficient path]
-**User intervention:** [Exact quote or "none" if self-discovered]
+**What went wrong or was suboptimal:** [Describe the incorrect approach, inefficient path,
+or unnecessary extra rounds taken]
+**User intervention:** [Exact quote, or "none" if self-discovered or efficiency-only]
 **Correct approach:** [What actually worked or should have been done]
 **Key evidence missed:** [Specific tool output that contained the signal]
 
@@ -94,22 +99,44 @@ Construct a structured context block for the subagent. Use this exact template:
 ## Existing Data
 - Total insights: [number from ~/.self-tune/index.json]
 - Recent insight topics: [list last 3 root_cause.abstract if any]
+
+## Dispatch Parameters
+- model_tier: [standard|premium — set by dispatcher based on Step 3 model choice]
+
+## Raw Conversation Excerpt
+[Paste the relevant portion of the conversation verbatim — from around the
+point where the key signal first appeared through the resolution. Include
+tool calls and their results exactly as they occurred. For large tool outputs,
+keep the decision-relevant lines and annotate trimmed portions with
+[trimmed: N→M lines].
+
+Target: the episode window from ~5 turns before T_optimal through T_actual.
+Aim for ≈4,000-8,000 tokens. If the episode spans more, trim aggressively
+at the boundaries and annotate [trimmed: N→M turns].]
 ---END CONTEXT---
 
 After the context block, include the full content of the appropriate prompt template
 (sidecar-prompt.md, retrospective-prompt.md, or correction-prompt.md).
 
-Do NOT include: full conversation history, unrelated code, code you didn't read.
+Do NOT include: unrelated conversation turns, code you didn't read, the full session if only a small segment is relevant.
 
 ### Step 3: Dispatch Subagent
 
 Use the Agent tool with these parameters:
 - `run_in_background: true` (never block main workflow)
 - `mode: "bypassPermissions"` (subagent needs to write to ~/.self-tune/data/)
-- `model: "sonnet"` (sufficient for reflection; save opus for the user's main work)
+- `model`: Choose based on episode value:
+  - **"sonnet"** (default): For most episodes — sufficient for straightforward corrections
+  - **"opus"**: For high-value episodes where CoT quality is critical. Use opus when ANY of:
+    - The adversarial verdict is clearly `high_confidence` and wasted_rounds > 5
+    - The episode involves complex multi-step reasoning errors
+    - The episode captures a rare failure mode (model persisted in wrong direction
+      across 3+ attempts, or a previously-accepted solution turned out to be wrong)
+  - When in doubt, use sonnet. The cost difference is significant.
 
 The prompt MUST include:
-1. The context package from Step 2 (above)
+1. The context package from Step 2 (above), including the raw conversation excerpt —
+   this is the primary evidence source the subagent will use for building SFT queries.
 2. The FULL content of the prompt template file — read it with the Read tool and paste it in.
    Do NOT tell the subagent to "read ./sidecar-prompt.md" — it cannot access skill files.
 3. The FULL content of output-schema.md — same reason.

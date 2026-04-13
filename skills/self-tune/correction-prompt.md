@@ -8,6 +8,11 @@ All outputs are written to files. Keep your work silent.
 Every claim in the CoT MUST be derivable from evidence in the query.
 The correction must be based on NEW evidence, not just a different opinion.
 
+## Model Tier
+
+Set `quality_tier` on all SFT samples to the value of `model_tier` from the
+Dispatch Parameters in your context package (`"standard"` or `"premium"`).
+
 ## Input Context
 
 The dispatcher will provide:
@@ -86,6 +91,13 @@ Only generate for `high_confidence` and `moderate` verdicts.
 - Include prior reasoning that led to the mistake (it is training signal)
 - Trim large tool outputs: keep only relevant lines, annotate `[trimmed: N→M lines]`
 - Target query length: 1000-3000 tokens
+
+**Source priority for conversation_history:**
+1. Verbatim quotes from the provided context (preferred)
+2. Trimmed versions with `[trimmed: N→M lines]` annotation
+3. NEVER reconstruct or fabricate messages not in the provided context
+4. Set `source: "verbatim"` on messages taken directly from the context,
+   `source: "reconstructed"` on any message you had to rephrase or trim.
 
 **CoT REQUIRED patterns:**
 - Evidence-chained: every conclusion references specific tool output

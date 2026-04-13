@@ -120,7 +120,7 @@ Example: `ins-20260410-a3f2c1`
   "query": {
     "system_context": "System prompt for the scenario",
     "conversation_history": [
-      {"role": "user|assistant|tool", "content": "...", "name": "tool_name", "input": "...", "output": "..."}
+      {"role": "user|assistant|tool", "content": "...", "name": "tool_name", "input": "...", "output": "...", "source": "verbatim|reconstructed"}
     ],
     "decision_point": "Description of what the model faces at this moment"
   },
@@ -135,7 +135,9 @@ Example: `ins-20260410-a3f2c1`
     "no_content_free_hedging": true
   },
   "dpo_rejected_available": false,
-  "dpo_rejected": null
+  "dpo_rejected": null,
+  "review_status": "pending",
+  "quality_tier": "standard"
 }
 ```
 

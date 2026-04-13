@@ -9,12 +9,20 @@ Every claim in the CoT MUST be derivable from evidence in the query.
 If you cannot point to a specific tool output or conversation message
 that supports a conclusion, that conclusion is post-hoc rationalization. Remove it.
 
+## Model Tier
+
+Set `quality_tier` on all SFT samples to the value of `model_tier` from the
+Dispatch Parameters in your context package (`"standard"` or `"premium"`).
+
 ## Input Context
 
 The dispatcher will provide:
 - Task description
 - Episode summary (what went wrong, user intervention, correct approach)
 - Project context (language, framework)
+- **Raw conversation excerpt** — the verbatim conversation segment covering the episode,
+  including tool calls and results. This is your PRIMARY evidence source for building
+  the SFT query's `conversation_history`.
 
 ## Workflow
 
@@ -88,6 +96,15 @@ is not framework-specific.
 
 Build the query to reflect real agentic interaction distribution:
 
+**Source priority for conversation_history (concrete samples):**
+1. Verbatim quotes from the raw conversation excerpt (preferred)
+2. Trimmed versions of raw excerpts with `[trimmed: N→M lines]` annotation
+3. NEVER reconstruct or fabricate messages not in the raw excerpt
+4. Set `source: "verbatim"` on messages taken directly from the excerpt,
+   `source: "reconstructed"` on any message you had to rephrase or trim.
+
+For abstract variants, see Step 5b — different rules apply.
+
 - **assistant ↔ tool interactions dominate** (this is realistic)
 - **user messages are minimal** (typically 1-3 turns)
 - Keep tool results that contain decision-relevant information
@@ -152,6 +169,41 @@ Before writing the SFT sample, verify:
 - Is the CoT genuinely better than what actually happened, not just a restatement?
 - Does the response end at the FIRST correct action? It must NOT contain
   fabricated tool outputs, hypothetical results, or narrated multi-step execution.
+- Is every message in `conversation_history` traceable to the raw conversation excerpt?
+  Reconstructed messages that don't appear in the excerpt must be removed.
+
+### 5b. Abstract Variant (Optional)
+
+If the insight's generalization ladder shows the pattern is NOT purely framework-specific
+(i.e., L2 or L3 captures a meaningfully different lesson from L1), generate a second
+SFT sample with `version: "abstract"`:
+
+1. Take the concrete sample as a starting point
+2. Replace framework-specific details in `system_context` with generic equivalents
+   (e.g., "Express.js middleware" → "web framework middleware")
+3. Replace framework-specific details in `conversation_history` messages while preserving
+   the decision-relevant structure (tool names, role flow stay the same)
+4. Rewrite `cot` to reference the abstract pattern instead of specific APIs
+5. Update `decision_point` to describe the abstract scenario
+6. Set `version: "abstract"` and use a new `sft-` ID
+7. Keep the same `insight_id` and `trace_id` as the concrete version
+
+**Abstract conversation_history rules** (these override the "NEVER reconstruct" rule
+which applies only to concrete samples):
+- The abstract variant is a **structure-preserving substitution** of the concrete one
+- Same number of turns, same roles, same decision flow — only surface labels change
+- You may NOT add, remove, or reorder turns
+- You may NOT invent new tool outputs or information not present in the concrete version
+- Set `source: "reconstructed"` on ALL messages in abstract variants
+
+**Skip the abstract variant if:**
+- L1 and L2 are essentially the same (the pattern IS framework-specific)
+- After replacing framework-specific names, the decision_point no longer maps to
+  a distinct action the model could take (the abstraction destroyed the signal)
+- The concrete sample's local_score < 0.7
+
+The abstract variant inherits the concrete sample's `quality_tier`, `review_status` ("pending"),
+and quality flags. It gets its own `local_score` assessment.
 
 ### 6. Contradiction Check (Lightweight)
 
@@ -269,9 +321,9 @@ Example: `ins-20260410-a3f9c2`
   "query": {
     "system_context": "<system prompt for the scenario>",
     "conversation_history": [
-      {"role": "user", "content": "..."},
-      {"role": "assistant", "content": "..."},
-      {"role": "tool", "name": "Bash", "input": "...", "output": "..."}
+      {"role": "user", "content": "...", "source": "verbatim"},
+      {"role": "assistant", "content": "...", "source": "verbatim"},
+      {"role": "tool", "name": "Bash", "input": "...", "output": "...", "source": "reconstructed"}
     ],
     "decision_point": "<what the model faces at this moment>"
   },
@@ -292,3 +344,6 @@ Example: `ins-20260410-a3f9c2`
   }
 }
 ```
+
+For abstract variants, use a separate `sft-` ID with `"version": "abstract"`.
+The `insight_id` and `trace_id` should match the concrete version.

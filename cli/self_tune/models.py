@@ -179,6 +179,7 @@ class ConversationMessage(BaseModel):
     name: Optional[str] = None
     input: Optional[str] = None
     output: Optional[str] = None
+    source: Optional[Literal["verbatim", "reconstructed"]] = None
 
 
 class SFTQuery(BaseModel):
@@ -250,6 +251,8 @@ class SFTSample(BaseModel):
     quality: SFTQualityScore
     dpo_rejected_available: bool = False
     dpo_rejected: Optional[DPORejected] = None
+    review_status: Literal["pending", "approved", "rejected"] = "pending"
+    quality_tier: Literal["standard", "premium"] = "standard"
 
 
 class Correction(BaseModel):

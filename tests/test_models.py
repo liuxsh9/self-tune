@@ -12,6 +12,7 @@ from self_tune.models import (
     SFTSample,
     SFTType,
     Trace,
+    ConversationMessage,
     generate_id,
 )
 
@@ -116,3 +117,69 @@ def test_insight_adversarial_confidence_range():
     data["adversarial_reflection"]["attribution_a"]["confidence"] = 1.5
     with pytest.raises(Exception):
         Insight.model_validate(data)
+
+
+# ── ConversationMessage source field ────────────────────────────────
+
+def test_conversation_message_source_verbatim():
+    """source field accepts 'verbatim'."""
+    m = ConversationMessage(role="user", content="hello", source="verbatim")
+    assert m.source == "verbatim"
+
+
+def test_conversation_message_source_reconstructed():
+    """source field accepts 'reconstructed'."""
+    m = ConversationMessage(role="tool", name="Bash", source="reconstructed")
+    assert m.source == "reconstructed"
+
+
+def test_conversation_message_source_default_none():
+    """source field defaults to None for backwards compatibility."""
+    m = ConversationMessage(role="assistant", content="ok")
+    assert m.source is None
+
+
+def test_conversation_message_source_rejects_invalid():
+    """source field rejects values outside the Literal."""
+    with pytest.raises(Exception):
+        ConversationMessage(role="user", content="x", source="raw")
+
+
+def test_sft_sample_review_status_default():
+    """review_status defaults to 'pending' for new and legacy samples."""
+    data = load_fixture("sample_sft.json")
+    sample = SFTSample.model_validate(data)
+    assert sample.review_status == "pending"
+
+
+def test_sft_sample_review_status_values():
+    """review_status accepts valid values and rejects invalid ones."""
+    data = load_fixture("sample_sft.json")
+    for status in ["pending", "approved", "rejected"]:
+        data["review_status"] = status
+        sample = SFTSample.model_validate(data)
+        assert sample.review_status == status
+
+    data["review_status"] = "maybe"
+    with pytest.raises(Exception):
+        SFTSample.model_validate(data)
+
+
+def test_sft_sample_quality_tier_default():
+    """quality_tier defaults to 'standard' for new and legacy samples."""
+    data = load_fixture("sample_sft.json")
+    sample = SFTSample.model_validate(data)
+    assert sample.quality_tier == "standard"
+
+
+def test_sft_sample_quality_tier_values():
+    """quality_tier accepts valid values and rejects invalid ones."""
+    data = load_fixture("sample_sft.json")
+    for tier in ["standard", "premium"]:
+        data["quality_tier"] = tier
+        sample = SFTSample.model_validate(data)
+        assert sample.quality_tier == tier
+
+    data["quality_tier"] = "ultra"
+    with pytest.raises(Exception):
+        SFTSample.model_validate(data)
