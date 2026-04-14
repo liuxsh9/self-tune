@@ -100,8 +100,23 @@ or unnecessary extra rounds taken]
 - Key files: [list 1-3 most relevant files]
 
 ## Existing Data
-- Total insights: [number from ~/.self-tune/index.json]
-- Recent insight topics: [list last 3 root_cause.abstract if any]
+[Run this to gather existing data — copy the output directly:]
+```bash
+.venv/bin/python3 -c "
+import json, os, pathlib
+idx = pathlib.Path.home() / '.self-tune' / 'index.json'
+if idx.exists():
+    d = json.loads(idx.read_text())
+    print(f'Total insights: {d[\"stats\"][\"total_insights\"]}')
+else:
+    print('Total insights: 0')
+idir = pathlib.Path.home() / '.self-tune' / 'data' / 'insights'
+if idir.exists():
+    for f in sorted(idir.glob('*.json'))[-3:]:
+        a = json.loads(f.read_text()).get('root_cause',{}).get('abstract','?')
+        print(f'  - {a}')
+"
+```
 
 ## Dispatch Parameters
 - model_tier: [standard|premium — set by dispatcher based on Step 3 model choice]
