@@ -9,7 +9,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, date
 from enum import Enum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -177,7 +177,7 @@ class ConversationMessage(BaseModel):
     role: str
     content: Optional[str] = None
     name: Optional[str] = None
-    input: Optional[str] = None
+    input: Optional[str | dict[str, Any]] = None
     output: Optional[str] = None
     source: Optional[Literal["verbatim", "reconstructed"]] = None
 
@@ -229,7 +229,7 @@ class Insight(BaseModel):
 class SFTAction(BaseModel):
     """The correct tool call the model should make at the decision point."""
     tool: str
-    input: str
+    input: str | dict[str, Any]
 
 
 class DPORejected(BaseModel):

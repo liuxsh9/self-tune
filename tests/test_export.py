@@ -6,7 +6,7 @@ import pytest
 
 from self_tune.models import SFTSample, Insight
 from self_tune.store import SelfTuneStore
-from self_tune.export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml, ExportValidationError
+from self_tune.export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml, export_ml2, ExportValidationError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -397,3 +397,262 @@ def test_export_chatml_action_as_function_call(tmp_path):
     assert "function_call" in final
     assert final["function_call"]["name"] == "Bash"
     assert "<think>" in final["content"]
+
+
+def test_export_ml2_format(tmp_path):
+    """ML2 format has version, meta_info, messages, and tools."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_ml2(store, output)
+    assert count == 1
+    row = json.loads(output.read_text().strip())
+    assert row["version"] == "2.0.0"
+    assert "meta_info" in row
+    meta = row["meta_info"]
+    assert meta["teacher"] == "claude-sonnet-4-6"
+    assert meta["query_source"] == "self-tune"
+    assert meta["category"] == "agent"
+    assert isinstance(meta["rounds"], int)
+    assert "messages" in row
+    assert "tools" in row  # fixture has tool interactions
+
+
+def test_export_ml2_reasoning_content(tmp_path):
+    """Every assistant message has a reasoning_content field."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    row = json.loads(output.read_text().strip())
+    assistant_msgs = [m for m in row["messages"] if m["role"] == "assistant"]
+    assert len(assistant_msgs) >= 2  # at least context + final
+    for msg in assistant_msgs:
+        assert "reasoning_content" in msg, "assistant message missing reasoning_content"
+        assert isinstance(msg["reasoning_content"], str)
+    # Context assistant messages should have empty reasoning_content
+    for msg in assistant_msgs[:-1]:
+        assert msg["reasoning_content"] == ""
+    # Final assistant should have non-empty reasoning_content (the CoT)
+    assert assistant_msgs[-1]["reasoning_content"] != ""
+
+
+def test_export_ml2_final_turn_no_action(tmp_path):
+    """Without action: reasoning_content=cot, content=response, no tool_calls."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    row = json.loads(output.read_text().strip())
+    final = row["messages"][-1]
+    assert final["role"] == "assistant"
+    assert final["reasoning_content"] != ""
+    assert final["content"] != ""  # response text
+    assert "tool_calls" not in final
+    # No <think> tags — CoT is in reasoning_content, not content
+    assert "<think>" not in final["content"]
+
+
+def test_export_ml2_final_turn_with_action(tmp_path):
+    """With action: reasoning_content=cot, content='', tool_calls present."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-pmlact"
+    sft_data["action"] = {"tool": "Bash", "input": "date"}
+    sft_data["response"] = "Check current time"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    lines = output.read_text().strip().split("\n")
+    # "g7h8i9" < "pmlact" alphabetically → action sample is second line
+    action_row = json.loads(lines[1])
+    final = action_row["messages"][-1]
+    assert final["role"] == "assistant"
+    assert final["reasoning_content"] != ""
+    assert final["content"] == ""
+    assert "tool_calls" in final
+    assert final["tool_calls"][0]["function"]["name"] == "Bash"
+    assert final["weight"] == 1
+
+
+def test_export_ml2_weight(tmp_path):
+    """Only final assistant turn has weight:1, context messages have no weight key."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    row = json.loads(output.read_text().strip())
+    messages = row["messages"]
+
+    # All messages except the last should NOT have weight
+    for msg in messages[:-1]:
+        assert "weight" not in msg, f"Context {msg['role']} message should not have weight"
+
+    # Last message (training target) should have weight:1
+    last = messages[-1]
+    assert last["role"] == "assistant"
+    assert last.get("weight") == 1
+
+
+def test_export_no_consecutive_assistant_sft(tmp_path):
+    """SFT export merges tool_calls into preceding assistant when history has assistant→tool."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+    row = json.loads(output.read_text().strip().split("\n")[0])
+    roles = [m["role"] for m in row["messages"]]
+    for i in range(1, len(roles)):
+        assert not (roles[i] == "assistant" and roles[i - 1] == "assistant"), (
+            f"Consecutive assistant at positions {i - 1},{i}: {roles}"
+        )
+
+
+def test_export_no_consecutive_assistant_ml2(tmp_path):
+    """ML2 export merges tool_calls into preceding assistant when history has assistant→tool."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    row = json.loads(output.read_text().strip().split("\n")[0])
+    roles = [m["role"] for m in row["messages"]]
+    for i in range(1, len(roles)):
+        assert not (roles[i] == "assistant" and roles[i - 1] == "assistant"), (
+            f"Consecutive assistant at positions {i - 1},{i}: {roles}"
+        )
+
+
+def test_export_tool_arguments_use_correct_key(tmp_path):
+    """Tool arguments use the correct parameter name per tool, not always 'command'."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+    row = json.loads(output.read_text().strip().split("\n")[0])
+    messages = row["messages"]
+
+    # Find tool_calls and verify argument keys match the tool
+    for msg in messages:
+        if "tool_calls" not in msg:
+            continue
+        for tc in msg["tool_calls"]:
+            name = tc["function"]["name"]
+            args = json.loads(tc["function"]["arguments"])
+            if not args:
+                continue
+            key = list(args.keys())[0]
+            if name == "Bash":
+                assert key == "command", f"Bash should use 'command', got '{key}'"
+            elif name == "Read":
+                assert key == "file_path", f"Read should use 'file_path', got '{key}'"
+            elif name == "Grep":
+                assert key == "pattern", f"Grep should use 'pattern', got '{key}'"
+            elif name == "Glob":
+                assert key == "pattern", f"Glob should use 'pattern', got '{key}'"
+            elif name == "Edit":
+                assert key == "file_path", f"Edit should use 'file_path', got '{key}'"
+
+
+def _make_edit_action_sample(store, sample_id="sft-20260410-eddict"):
+    """Helper: create a sample with Edit dict action."""
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = sample_id
+    sft_data["action"] = {
+        "tool": "Edit",
+        "input": {
+            "file_path": "src/main.py",
+            "old_string": "foo",
+            "new_string": "bar",
+        },
+    }
+    sft_data["response"] = "Replace foo with bar in main.py"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+
+def test_export_sft_action_dict_input(tmp_path):
+    """SFT export preserves all dict keys for multi-param tool actions."""
+    store = _seed_store(tmp_path)
+    _make_edit_action_sample(store)
+
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+    lines = output.read_text().strip().split("\n")
+    # "eddict" < "g7h8i9" → first line
+    row = json.loads(lines[0])
+    final = row["messages"][-1]
+    assert final["weight"] == 1
+    args = json.loads(final["tool_calls"][0]["function"]["arguments"])
+    assert args["file_path"] == "src/main.py"
+    assert args["old_string"] == "foo"
+    assert args["new_string"] == "bar"
+
+
+def test_export_ml2_action_dict_input(tmp_path):
+    """ML2 export preserves all dict keys for multi-param tool actions."""
+    store = _seed_store(tmp_path)
+    _make_edit_action_sample(store)
+
+    output = tmp_path / "export.jsonl"
+    export_ml2(store, output)
+    lines = output.read_text().strip().split("\n")
+    row = json.loads(lines[0])
+    final = row["messages"][-1]
+    assert final["weight"] == 1
+    args = json.loads(final["tool_calls"][0]["function"]["arguments"])
+    assert args["file_path"] == "src/main.py"
+    assert args["old_string"] == "foo"
+    assert args["new_string"] == "bar"
+
+
+def test_export_anthropic_action_dict_input(tmp_path):
+    """Anthropic export preserves all dict keys for multi-param tool actions."""
+    store = _seed_store(tmp_path)
+    _make_edit_action_sample(store)
+
+    output = tmp_path / "export.jsonl"
+    export_anthropic(store, output)
+    lines = output.read_text().strip().split("\n")
+    row = json.loads(lines[0])
+    final = row["messages"][-1]
+    assert final["role"] == "assistant"
+    tool_use_blocks = [b for b in final["content"] if b.get("type") == "tool_use"]
+    assert len(tool_use_blocks) == 1
+    inp = tool_use_blocks[0]["input"]
+    assert inp["file_path"] == "src/main.py"
+    assert inp["old_string"] == "foo"
+    assert inp["new_string"] == "bar"
+
+
+def test_export_tool_arguments_dict_passthrough(tmp_path):
+    """When conversation_history has dict input, export passes it through unchanged."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-dicthist"
+    sft_data["query"]["conversation_history"] = [
+        {"role": "user", "content": "Fix the typo"},
+        {"role": "assistant", "content": "Let me edit that file."},
+        {
+            "role": "tool",
+            "name": "Edit",
+            "input": {"file_path": "src/app.py", "old_string": "teh", "new_string": "the"},
+            "output": "ok",
+        },
+    ]
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+    lines = output.read_text().strip().split("\n")
+    # "dicthist" < "g7h8i9" → first line
+    row = json.loads(lines[0])
+    # Find the Edit tool_call in context
+    for msg in row["messages"]:
+        if "tool_calls" not in msg:
+            continue
+        for tc in msg["tool_calls"]:
+            if tc["function"]["name"] == "Edit":
+                args = json.loads(tc["function"]["arguments"])
+                assert args["file_path"] == "src/app.py"
+                assert args["old_string"] == "teh"
+                assert args["new_string"] == "the"
+                return
+    pytest.fail("Edit tool_call not found in exported messages")

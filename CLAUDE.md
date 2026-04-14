@@ -28,7 +28,7 @@ self-tune export --format sft -o training.jsonl
 
 Two independent halves that share a data contract:
 
-**Skill side** (`skills/self-tune/`) — prompt templates consumed by Claude Code subagents:
+**Skill side** (`skills/reflect/`) — prompt templates consumed by Claude Code subagents:
 - `SKILL.md` — manifest, trigger criteria, dispatch protocol
 - `sidecar-prompt.md` — mid-task extraction (most common)
 - `retrospective-prompt.md` — full-session review after completion
@@ -63,4 +63,4 @@ Two independent halves that share a data contract:
 
 ## Auto-Trigger Sentinel
 
-The sentinel in `~/.claude/CLAUDE.md` checks after each user request whether the interaction had friction AND the lesson is generalizable. Both conditions must be true to call `Skill("self-tune")`. "Friction" includes inefficiency — a task that succeeded but took significantly more rounds than necessary still qualifies. This mirrors how auto memory works but produces SFT samples instead of memory entries — they are complementary, not substitutes.
+The sentinel in `~/.claude/CLAUDE.md` checks after each user request whether the interaction had friction AND the lesson is generalizable. Both conditions must be true to call `Skill("reflect")`. "Friction" includes inefficiency — a task that succeeded but took significantly more rounds than necessary still qualifies. This mirrors how auto memory works but produces SFT samples instead of memory entries — they are complementary, not substitutes.

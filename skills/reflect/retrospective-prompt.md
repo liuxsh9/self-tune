@@ -145,8 +145,10 @@ Transform the user's wisdom into the model's own reasoning in the CoT:
   imagined results, or narrated multi-step execution — REJECT entire sample
 
 **Response and action rules:**
-- When the correct move is a tool call: set `action` (e.g., `{"tool": "Bash", "input": "date"}`),
-  set `response` to a brief intent description. Do NOT narrate execution beyond the first action.
+- When the correct move is a tool call: set `action` with the tool call. Use a plain string
+  for single-parameter tools (e.g., `{"tool": "Bash", "input": "date"}`), a dict for
+  multi-parameter tools (e.g., `{"tool": "Edit", "input": {"file_path": "src/main.py", "old_string": "foo", "new_string": "bar"}}`).
+  Set `response` to a brief intent description. Do NOT narrate execution beyond the first action.
 - When the correct move is a direct reply: set `action` to null, set `response` to the ideal message.
 
 **Quality self-check before writing:**

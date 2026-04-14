@@ -120,7 +120,7 @@ Example: `ins-20260410-a3f2c1`
   "query": {
     "system_context": "System prompt for the scenario",
     "conversation_history": [
-      {"role": "user|assistant|tool", "content": "...", "name": "tool_name", "input": "...", "output": "...", "source": "verbatim|reconstructed"}
+      {"role": "user|assistant|tool", "content": "...", "name": "tool_name", "input": "string or {dict}", "output": "...", "source": "verbatim|reconstructed"}
     ],
     "decision_point": "Description of what the model faces at this moment"
   },
@@ -140,6 +140,8 @@ Example: `ins-20260410-a3f2c1`
   "quality_tier": "standard"
 }
 ```
+
+`action.input` can be a plain string for single-parameter tools (`"date"`) or a dict for multi-parameter tools (`{"file_path": "...", "old_string": "...", "new_string": "..."}`). Same applies to `conversation_history[*].input`.
 
 When `dpo_rejected_available` is `true`, `dpo_rejected` is populated:
 

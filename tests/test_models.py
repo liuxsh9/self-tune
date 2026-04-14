@@ -9,6 +9,7 @@ import pytest
 from self_tune.models import (
     Correction,
     Insight,
+    SFTAction,
     SFTSample,
     SFTType,
     Trace,
@@ -183,3 +184,55 @@ def test_sft_sample_quality_tier_values():
     data["quality_tier"] = "ultra"
     with pytest.raises(Exception):
         SFTSample.model_validate(data)
+
+
+# ── input field accepts str and dict ──────────────────────────────
+
+
+def test_sft_action_input_accepts_str():
+    """SFTAction.input accepts a plain string (single-param tools)."""
+    action = SFTAction(tool="Bash", input="date")
+    assert action.input == "date"
+
+
+def test_sft_action_input_accepts_dict():
+    """SFTAction.input accepts a dict (multi-param tools like Edit)."""
+    action = SFTAction(tool="Edit", input={
+        "file_path": "src/main.py",
+        "old_string": "foo",
+        "new_string": "bar",
+    })
+    assert isinstance(action.input, dict)
+    assert action.input["file_path"] == "src/main.py"
+    assert action.input["old_string"] == "foo"
+
+
+def test_conversation_message_input_accepts_dict():
+    """ConversationMessage.input accepts a dict for multi-param tools."""
+    msg = ConversationMessage(
+        role="tool",
+        name="Edit",
+        input={"file_path": "a.py", "old_string": "x", "new_string": "y"},
+        output="ok",
+    )
+    assert isinstance(msg.input, dict)
+    assert msg.input["file_path"] == "a.py"
+
+
+def test_conversation_message_input_accepts_str():
+    """ConversationMessage.input still accepts a plain string."""
+    msg = ConversationMessage(role="tool", name="Bash", input="ls", output="file.txt")
+    assert msg.input == "ls"
+
+
+def test_sft_sample_with_dict_action_roundtrips():
+    """SFTSample with dict action survives JSON serialization round-trip."""
+    data = load_fixture("sample_sft.json")
+    data["action"] = {"tool": "Edit", "input": {
+        "file_path": "src/main.py",
+        "old_string": "foo",
+        "new_string": "bar",
+    }}
+    sample = SFTSample.model_validate(data)
+    dumped = json.loads(sample.model_dump_json())
+    assert dumped["action"]["input"]["old_string"] == "foo"

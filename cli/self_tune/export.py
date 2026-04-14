@@ -121,6 +121,33 @@ AGENTIC_TOOLS = [
 
 VALID_TOOL_NAMES = {t["function"]["name"] for t in AGENTIC_TOOLS}
 
+# Map tool names to their primary input parameter name.
+# Used when ConversationMessage.input is a flat string that needs to be
+# wrapped into the correct argument key for the tool_calls schema.
+TOOL_INPUT_KEY = {
+    "Bash": "command",
+    "Read": "file_path",
+    "Edit": "file_path",
+    "Grep": "pattern",
+    "Glob": "pattern",
+    "WebSearch": "query",
+    "WebFetch": "url",
+}
+
+
+def _tool_arguments(tool_name: str, input_val: str | dict | None) -> str:
+    """Build JSON arguments string for a tool call.
+
+    If input_val is already a dict (structured arguments), serialize it directly.
+    If it's a flat string, wrap it in the tool's primary parameter key.
+    """
+    if not input_val:
+        return "{}"
+    if isinstance(input_val, dict):
+        return json.dumps(input_val, ensure_ascii=False)
+    key = TOOL_INPUT_KEY.get(tool_name or "Bash", "command")
+    return json.dumps({key: input_val}, ensure_ascii=False)
+
 
 class ExportValidationError(ValueError):
     """Raised when an SFT sample fails export validation."""
@@ -232,20 +259,25 @@ def _to_openai_sft(sample: SFTSample) -> dict:
             call_counter += 1
             call_id = f"call_{call_counter}"
 
-            # Assistant message with tool_calls
-            arguments = json.dumps({"command": msg.input} if msg.input else {}, ensure_ascii=False)
-            messages.append({
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": msg.name or "Bash",
-                        "arguments": arguments,
-                    },
-                }],
-                "weight": 0,
-            })
+            arguments = _tool_arguments(msg.name, msg.input)
+            tool_call = {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": msg.name or "Bash",
+                    "arguments": arguments,
+                },
+            }
+
+            # Merge into preceding assistant message to avoid consecutive assistant roles
+            if messages and messages[-1]["role"] == "assistant" and "tool_calls" not in messages[-1]:
+                messages[-1]["tool_calls"] = [tool_call]
+            else:
+                messages.append({
+                    "role": "assistant",
+                    "tool_calls": [tool_call],
+                    "weight": 0,
+                })
 
             # Tool response
             messages.append({
@@ -273,7 +305,7 @@ def _to_openai_sft(sample: SFTSample) -> dict:
     if sample.action:
         call_counter += 1
         call_id = f"call_{call_counter}"
-        arguments = json.dumps({"command": sample.action.input}, ensure_ascii=False)
+        arguments = _tool_arguments(sample.action.tool, sample.action.input)
         final_msg: dict = {
             "role": "assistant",
             "content": f"<think>\n{sample.cot}\n</think>",
@@ -355,7 +387,7 @@ def _to_anthropic_sft(sample: SFTSample) -> dict:
                     "type": "tool_use",
                     "id": tool_use_id,
                     "name": m.name or "Bash",
-                    "input": {"command": m.input} if m.input else {},
+                    "input": json.loads(_tool_arguments(m.name, m.input)),
                 })
                 tool_results.append({
                     "type": "tool_result",
@@ -393,7 +425,7 @@ def _to_anthropic_sft(sample: SFTSample) -> dict:
                 "type": "tool_use",
                 "id": tool_use_id,
                 "name": sample.action.tool,
-                "input": {"command": sample.action.input},
+                "input": json.loads(_tool_arguments(sample.action.tool, sample.action.input)),
             },
         ]
     else:
@@ -431,14 +463,21 @@ def _to_chatml_sft(sample: SFTSample) -> dict:
     for msg in sample.query.conversation_history:
         if msg.role == "tool":
             # ChatML: tool calls as assistant function_call + function response
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "function_call": {
-                    "name": msg.name or "Bash",
-                    "arguments": json.dumps({"command": msg.input} if msg.input else {}),
-                },
-            })
+            function_call = {
+                "name": msg.name or "Bash",
+                "arguments": _tool_arguments(msg.name, msg.input),
+            }
+
+            # Merge into preceding assistant message to avoid consecutive assistant roles
+            if messages and messages[-1]["role"] == "assistant" and "function_call" not in messages[-1]:
+                messages[-1]["function_call"] = function_call
+                messages[-1]["content"] = messages[-1].get("content") or None
+            else:
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "function_call": function_call,
+                })
             messages.append({
                 "role": "function",
                 "name": msg.name or "Bash",
@@ -456,7 +495,7 @@ def _to_chatml_sft(sample: SFTSample) -> dict:
             "content": f"<think>\n{sample.cot}\n</think>",
             "function_call": {
                 "name": sample.action.tool,
-                "arguments": json.dumps({"command": sample.action.input}),
+                "arguments": _tool_arguments(sample.action.tool, sample.action.input),
             },
         })
     else:
@@ -486,5 +525,137 @@ def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float]
         for sample in samples:
             _validate_sample(sample)
             example = _to_chatml_sft(sample)
+            f.write(json.dumps(example, ensure_ascii=False) + "\n")
+    return len(samples)
+
+
+def _to_ml2_sft(sample: SFTSample) -> dict:
+    """Convert SFT sample to extended OpenAI format with reasoning_content and meta_info.
+
+    Key differences from standard OpenAI SFT:
+    - Every assistant message has a reasoning_content field (String)
+    - CoT goes into reasoning_content, not <think> tags in content
+    - Context assistant messages have reasoning_content: "" (fast thinking)
+    - weight only on final assistant turn (1), not on context messages
+    - Top-level version and meta_info fields
+    """
+    messages = []
+    call_counter = 0
+
+    # System message
+    messages.append({
+        "role": "system",
+        "content": sample.query.system_context,
+    })
+
+    # Conversation history
+    for msg in sample.query.conversation_history:
+        if msg.role == "tool":
+            call_counter += 1
+            call_id = f"call_{call_counter}"
+
+            arguments = _tool_arguments(msg.name, msg.input)
+            tool_call = {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": msg.name or "Bash",
+                    "arguments": arguments,
+                },
+            }
+
+            # Merge into preceding assistant message to avoid consecutive assistant roles
+            if messages and messages[-1]["role"] == "assistant" and "tool_calls" not in messages[-1]:
+                messages[-1]["tool_calls"] = [tool_call]
+            else:
+                messages.append({
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "",
+                    "tool_calls": [tool_call],
+                })
+
+            # Tool response
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": msg.output or "",
+            })
+        elif msg.role == "user":
+            messages.append({
+                "role": "user",
+                "content": msg.content or "",
+            })
+        elif msg.role == "assistant":
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "reasoning_content": "",
+            })
+
+    # Final assistant turn: the training target (weight:1)
+    if sample.action:
+        call_counter += 1
+        call_id = f"call_{call_counter}"
+        arguments = _tool_arguments(sample.action.tool, sample.action.input)
+        final_msg: dict = {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": sample.cot,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": sample.action.tool,
+                    "arguments": arguments,
+                },
+            }],
+            "weight": 1,
+        }
+    else:
+        final_msg = {
+            "role": "assistant",
+            "content": sample.response,
+            "reasoning_content": sample.cot,
+            "weight": 1,
+        }
+    messages.append(final_msg)
+
+    # Count conversation rounds (user messages in history)
+    rounds = sum(1 for m in sample.query.conversation_history if m.role == "user")
+
+    example: dict = {
+        "version": "2.0.0",
+        "meta_info": {
+            "teacher": "claude-sonnet-4-6",
+            "query_source": "self-tune",
+            "response_generate_time": sample.created_at.strftime("%Y-%m-%d"),
+            "response_update_time": sample.created_at.strftime("%Y-%m-%d"),
+            "owner": "",
+            "language": "auto",
+            "category": "agent",
+            "rounds": rounds,
+            "unique_info": {
+                "quality_tier": sample.quality_tier,
+                "sft_type": sample.sft_type.value,
+                "insight_id": sample.insight_id,
+            },
+        },
+        "messages": messages,
+    }
+
+    if call_counter > 0:
+        example["tools"] = AGENTIC_TOOLS
+
+    return example
+
+
+def export_ml2(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+    """Export SFT samples in extended OpenAI format with reasoning_content (JSONL)."""
+    samples = _filter(store.list_samples(), min_score, include_pending)
+    with output.open("w") as f:
+        for sample in samples:
+            _validate_sample(sample)
+            example = _to_ml2_sft(sample)
             f.write(json.dumps(example, ensure_ascii=False) + "\n")
     return len(samples)
