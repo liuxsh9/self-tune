@@ -80,6 +80,7 @@ def test_sft_sample_from_fixture():
         "preference_to_inquiry",
         "backtrack_decision",
         "tool_orchestration",
+        "success_exemplar",
     }
     actual_types = {t.value for t in SFTType}
     assert expected_types == actual_types

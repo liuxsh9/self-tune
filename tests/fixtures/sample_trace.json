@@ -1,5 +1,6 @@
 {
   "id": "trace-20260410-a1b2c3",
+  "schema_version": "2",
   "created_at": "2026-04-10T14:30:00Z",
   "source": "claude-code",
   "model": "claude-sonnet-4-6",

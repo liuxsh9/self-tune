@@ -23,9 +23,9 @@ Example: `ins-20260410-a3f2c1`
 
 | Enum | Values |
 |------|--------|
-| `InsightType` | `skill_gap` `knowledge_gap` `reasoning_error` `exploration_inefficiency` `tool_orchestration` `backtrack_failure` `preference_probe` `env_specific` |
+| `InsightType` | `skill_gap` `knowledge_gap` `reasoning_error` `exploration_inefficiency` `tool_orchestration` `backtrack_failure` `preference_probe` `env_specific` `success_exemplar` |
 | `InsightStatus` | `active` `superseded` `archived` |
-| `SFTType` | `user_prompt_internalization` `exploration_compression` `error_correction` `preference_to_inquiry` `backtrack_decision` `tool_orchestration` |
+| `SFTType` | `user_prompt_internalization` `exploration_compression` `error_correction` `preference_to_inquiry` `backtrack_decision` `tool_orchestration` `success_exemplar` |
 | `CorrectionType` | `genuine_improvement` `stylistic_preference` `factual_error` |
 | `CorrectionAction` | `supersede` `amend` `retract` |
 | `TriggerMode` | `auto` `manual` `scheduled` `sidecar` `retrospective` `user_correction` |
@@ -38,6 +38,7 @@ Example: `ins-20260410-a3f2c1`
 ```json
 {
   "id": "trace-YYYYMMDD-XXXXXX",
+  "schema_version": "2",
   "created_at": "ISO8601",
   "source": "claude-code",
   "model": "claude-sonnet-4-5",
@@ -69,9 +70,10 @@ Example: `ins-20260410-a3f2c1`
 ```json
 {
   "id": "ins-YYYYMMDD-XXXXXX",
-  "trace_id": "trace-YYYYMMDD-XXXXXX",
+  "trace_id": "trace-YYYYMMDD-XXXXXX or null",
+  "schema_version": "2",
   "created_at": "ISO8601",
-  "insight_type": "skill_gap|knowledge_gap|reasoning_error|exploration_inefficiency|tool_orchestration|backtrack_failure|preference_probe|env_specific",
+  "insight_type": "skill_gap|knowledge_gap|reasoning_error|exploration_inefficiency|tool_orchestration|backtrack_failure|preference_probe|env_specific|success_exemplar",
   "status": "active|superseded|archived",
   "root_cause": {
     "concrete": "Specific description of what went wrong",
@@ -114,9 +116,10 @@ Example: `ins-20260410-a3f2c1`
   "id": "sft-YYYYMMDD-XXXXXX",
   "insight_id": "ins-YYYYMMDD-XXXXXX",
   "trace_id": "trace-YYYYMMDD-XXXXXX",
+  "schema_version": "2",
   "created_at": "ISO8601",
   "version": "concrete|abstract",
-  "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration",
+  "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration|success_exemplar",
   "query": {
     "system_context": "System prompt for the scenario",
     "conversation_history": [
@@ -134,8 +137,6 @@ Example: `ins-20260410-a3f2c1`
     "no_post_hoc_rationalization": true,
     "no_content_free_hedging": true
   },
-  "dpo_rejected_available": false,
-  "dpo_rejected": null,
   "review_status": "pending",
   "quality_tier": "standard"
 }
@@ -143,21 +144,12 @@ Example: `ins-20260410-a3f2c1`
 
 `action.input` can be a plain string for single-parameter tools (`"date"`) or a dict for multi-parameter tools (`{"file_path": "...", "old_string": "...", "new_string": "..."}`). Same applies to `conversation_history[*].input`.
 
-When `dpo_rejected_available` is `true`, `dpo_rejected` is populated:
-
-```json
-"dpo_rejected_available": true,
-"dpo_rejected": {
-  "response": "The suboptimal response that was rejected",
-  "failure_mode": "Description of why this response is worse"
-}
-```
-
 ## Correction JSON Structure
 
 ```json
 {
   "id": "cor-YYYYMMDD-XXXXXX",
+  "schema_version": "2",
   "created_at": "ISO8601",
   "target_type": "insight|sft",
   "target_id": "ins-YYYYMMDD-XXXXXX",

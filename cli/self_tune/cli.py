@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .store import SelfTuneStore
-from .export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml, export_ml2
+from .export import export_sft, export_jsonl, export_anthropic, export_chatml, export_ml2, ExportValidationError, _validate_sample, _warn_sample
 
 import json as _json
 
@@ -101,21 +101,73 @@ def show(item_id: str):
     if not loader:
         console.print(f"[red]Unknown ID prefix: {prefix}[/red]")
         raise SystemExit(1)
-    item = loader(item_id)
+    try:
+        item = loader(item_id)
+    except FileNotFoundError:
+        console.print(f"[red]Item not found: {item_id}[/red]")
+        raise SystemExit(1)
     console.print_json(item.model_dump_json(indent=2))
 
 
 @main.command()
-@click.option("--format", "fmt", type=click.Choice(["ml2", "sft", "anthropic", "chatml", "dpo", "jsonl"]), default="ml2")
+def validate():
+    """Scan data files for corruption and semantic issues."""
+    from pydantic import ValidationError
+    store = _store()
+    loaders = {
+        "traces": (store.data_dir / "traces", store.load_trace),
+        "insights": (store.data_dir / "insights", store.load_insight),
+        "samples": (store.data_dir / "samples", store.load_sample),
+        "corrections": (store.data_dir / "corrections", store.load_correction),
+    }
+    bad: list[tuple[str, str]] = []
+    warnings: list[tuple[str, str]] = []
+    total = 0
+    for subdir, (dirpath, loader) in loaders.items():
+        for path in sorted(dirpath.glob("*.json")):
+            total += 1
+            try:
+                item = loader(path.stem)
+            except Exception as e:
+                bad.append((str(path), str(e).split("\n")[0]))
+                continue
+            # Semantic validation for SFT samples
+            if subdir == "samples":
+                try:
+                    _validate_sample(item)
+                except ExportValidationError as e:
+                    bad.append((str(path), str(e)))
+                for w in _warn_sample(item):
+                    warnings.append((str(path), w))
+
+    if bad:
+        console.print(f"[red]{len(bad)} invalid file(s) found:[/red]")
+        for path, err in bad:
+            console.print(f"  [red]{path}[/red]: {err}")
+    if warnings:
+        console.print(f"[yellow]{len(warnings)} sample(s) with semantic issues:[/yellow]")
+        for path, err in warnings:
+            console.print(f"  [yellow]{path}[/yellow]: {err}")
+    if bad:
+        raise SystemExit(1)
+    elif warnings:
+        console.print(f"[green]{total} file(s) parsed OK[/green], [yellow]{len(warnings)} semantic warning(s)[/yellow]")
+    else:
+        console.print(f"[green]All {total} file(s) valid.[/green]")
+
+
+@main.command()
+@click.option("--format", "fmt", type=click.Choice(["ml2", "sft", "anthropic", "chatml", "jsonl"]), default="ml2")
 @click.option("--output", "-o", type=click.Path(), default="self-tune-export.jsonl")
 @click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
 @click.option("--include-pending", is_flag=True, default=False, help="Include pending (unreviewed) samples")
-def export(fmt: str, output: str, min_score: float | None, include_pending: bool):
+@click.option("--max-per-type", type=int, default=None, help="Cap per-sft_type count for balanced distribution")
+def export(fmt: str, output: str, min_score: float | None, include_pending: bool, max_per_type: int | None):
     """Export SFT training data."""
     store = _store()
     output_path = Path(output)
-    exporters = {"ml2": export_ml2, "sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "dpo": export_dpo, "jsonl": export_jsonl}
-    count = exporters[fmt](store, output_path, min_score=min_score, include_pending=include_pending)
+    exporters = {"ml2": export_ml2, "sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "jsonl": export_jsonl}
+    count = exporters[fmt](store, output_path, min_score=min_score, include_pending=include_pending, max_per_type=max_per_type)
     if count == 0 and not include_pending:
         total = len(store.list_samples())
         if total > 0:

@@ -6,7 +6,7 @@ import pytest
 
 from self_tune.models import SFTSample, Insight
 from self_tune.store import SelfTuneStore
-from self_tune.export import export_sft, export_dpo, export_jsonl, export_anthropic, export_chatml, export_ml2, ExportValidationError
+from self_tune.export import export_sft, export_jsonl, export_anthropic, export_chatml, export_ml2, ExportValidationError, _validate_sample, _warn_sample
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -95,17 +95,6 @@ def test_export_sft_weight_field(tmp_path):
     assert last["role"] == "assistant"
     assert last.get("weight") == 1
 
-
-def test_export_dpo_format(tmp_path):
-    """DPO export produces prompt/chosen/rejected JSONL."""
-    store = _seed_store(tmp_path)
-    output = tmp_path / "export.jsonl"
-    count = export_dpo(store, output)
-    assert count == 1
-    line = json.loads(output.read_text().strip())
-    assert "prompt" in line
-    assert "chosen" in line
-    assert "rejected" in line
 
 
 def test_export_jsonl_format(tmp_path):
@@ -549,6 +538,36 @@ def test_export_tool_arguments_use_correct_key(tmp_path):
                 assert key == "file_path", f"Edit should use 'file_path', got '{key}'"
 
 
+def test_export_rejects_not_evidence_anchored(tmp_path):
+    """Export raises ExportValidationError when evidence_anchored is False."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-noevid"
+    sft_data["quality"]["evidence_anchored"] = False
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="evidence_anchored"):
+        export_sft(store, output)
+
+
+def test_export_allows_evidence_anchored_none(tmp_path):
+    """Export allows samples where evidence_anchored is None (not yet assessed)."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-evnone"
+    sft_data["quality"]["evidence_anchored"] = None
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 2  # fixture + this one
+
+
 def _make_edit_action_sample(store, sample_id="sft-20260410-eddict"):
     """Helper: create a sample with Edit dict action."""
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -656,3 +675,322 @@ def test_export_tool_arguments_dict_passthrough(tmp_path):
                 assert args["new_string"] == "the"
                 return
     pytest.fail("Edit tool_call not found in exported messages")
+
+
+# ── max_per_type tests ──────────────────────────────────────────────
+
+
+def test_export_max_per_type_caps_output(tmp_path):
+    """max_per_type limits how many samples of each sft_type are exported."""
+    store = SelfTuneStore(tmp_path)
+    store.init()
+    store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
+
+    # Create 3 exploration_compression samples
+    for i in range(3):
+        sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+        sft_data["id"] = f"sft-20260410-cap{i:03d}"
+        sft_data["review_status"] = "approved"
+        store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    # Without cap: all 3
+    count = export_sft(store, output)
+    assert count == 3
+
+    # With cap: max 2 per type
+    count = export_sft(store, output, max_per_type=2)
+    assert count == 2
+
+
+def test_export_max_per_type_caps_per_type_independently(tmp_path):
+    """max_per_type applies independently to each sft_type."""
+    store = SelfTuneStore(tmp_path)
+    store.init()
+    store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
+
+    # 3 exploration_compression + 2 backtrack_decision
+    for i in range(3):
+        sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+        sft_data["id"] = f"sft-20260410-exp{i:03d}"
+        sft_data["sft_type"] = "exploration_compression"
+        sft_data["review_status"] = "approved"
+        store.save_sample(SFTSample.model_validate(sft_data))
+
+    for i in range(2):
+        sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+        sft_data["id"] = f"sft-20260410-bck{i:03d}"
+        sft_data["sft_type"] = "backtrack_decision"
+        sft_data["review_status"] = "approved"
+        store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    # Cap at 2 per type: should keep 2 exploration + 2 backtrack = 4
+    count = export_sft(store, output, max_per_type=2)
+    assert count == 4
+
+
+# ── success_exemplar tests ──────────────────────────────────────────
+
+
+def test_export_success_exemplar_sample(tmp_path):
+    """success_exemplar samples export correctly in all formats."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-succes"
+    sft_data["sft_type"] = "success_exemplar"
+    sft_data["action"] = {"tool": "Edit", "input": {"file_path": "a.py", "old_string": "x", "new_string": "y"}}
+    sft_data["response"] = "Applying the efficient fix"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    for exporter in [export_sft, export_ml2, export_anthropic, export_chatml]:
+        output = tmp_path / f"export_{exporter.__name__}.jsonl"
+        count = exporter(store, output)
+        assert count == 2  # fixture + success_exemplar
+        lines = output.read_text().strip().split("\n")
+        assert len(lines) == 2
+
+
+# ── new tool names in export ────────────────────────────────────────
+
+
+def test_export_write_tool_in_action(tmp_path):
+    """Write tool in action.tool passes validation and exports correctly."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-writea"
+    sft_data["action"] = {"tool": "Write", "input": {"file_path": "out.txt", "content": "hello"}}
+    sft_data["response"] = "Creating the file"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 2
+
+
+def test_export_agent_tool_in_action(tmp_path):
+    """Agent tool in action.tool passes validation and exports correctly."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-agentt"
+    sft_data["action"] = {"tool": "Agent", "input": "Investigate the auth bug"}
+    sft_data["response"] = "Delegating to subagent"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 2
+
+
+def test_export_lsp_tool_in_action(tmp_path):
+    """LSP tool in action.tool passes validation and exports correctly."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-lsptol"
+    sft_data["action"] = {"tool": "LSP", "input": {"operation": "goToDefinition", "filePath": "a.py", "line": 10, "character": 5}}
+    sft_data["response"] = "Finding definition"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 2
+
+
+# ── _warn_sample tests ──────────────────────────────────────────────
+
+
+def test_warn_sample_short_history():
+    """_warn_sample flags conversation_history shorter than 8 messages."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sample = SFTSample.model_validate(data)
+    # Fixture has 5 messages → should warn
+    warnings = _warn_sample(sample)
+    assert len(warnings) == 1
+    assert "conversation_history" in warnings[0]
+
+
+def test_warn_sample_long_history_no_warning():
+    """_warn_sample returns empty list for history with >= 8 messages."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    # Build a history with 10 messages
+    data["query"]["conversation_history"] = [
+        {"role": "user", "content": "task"},
+    ] + [
+        item
+        for i in range(4)
+        for item in [
+            {"role": "assistant", "content": f"step {i}"},
+            {"role": "tool", "name": "Bash", "input": f"cmd{i}", "output": f"out{i}"},
+        ]
+    ] + [
+        {"role": "assistant", "content": "done"},
+    ]
+    sample = SFTSample.model_validate(data)
+    warnings = _warn_sample(sample)
+    assert len(warnings) == 0
+
+
+# ── C1: _cap_by_type guard tests ──────────────────────────────────────
+
+
+def test_export_max_per_type_zero_returns_empty(tmp_path):
+    """max_per_type=0 returns no samples."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output, max_per_type=0)
+    assert count == 0
+
+
+def test_export_max_per_type_negative_returns_empty(tmp_path):
+    """max_per_type with negative value returns no samples."""
+    store = _seed_store(tmp_path)
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output, max_per_type=-1)
+    assert count == 0
+
+
+# ── C2: _tool_arguments empty string/dict tests ──────────────────────
+
+
+def test_tool_arguments_empty_string():
+    """_tool_arguments with empty string wraps it (not treated as falsy)."""
+    from self_tune.export import _tool_arguments
+    result = json.loads(_tool_arguments("Bash", ""))
+    assert result == {"command": ""}
+
+
+def test_tool_arguments_empty_dict():
+    """_tool_arguments with empty dict serializes it (not treated as falsy)."""
+    from self_tune.export import _tool_arguments
+    result = json.loads(_tool_arguments("Edit", {}))
+    assert result == {}
+
+
+def test_tool_arguments_none():
+    """_tool_arguments with None returns empty object."""
+    from self_tune.export import _tool_arguments
+    result = json.loads(_tool_arguments("Bash", None))
+    assert result == {}
+
+
+# ── I1: export_jsonl validation tests ────────────────────────────────
+
+
+def test_export_jsonl_rejects_invalid_tool(tmp_path):
+    """export_jsonl also validates samples (rejects invalid tool names)."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-jlbadtl"
+    sft_data["action"] = {"tool": "FakeTool", "input": "x"}
+    sft_data["response"] = "intent"
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="FakeTool"):
+        export_jsonl(store, output)
+
+
+# ── I2: no_post_hoc_rationalization validation tests ─────────────────
+
+
+def test_export_rejects_post_hoc_rationalization(tmp_path):
+    """Export raises ExportValidationError when no_post_hoc_rationalization is False."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-posthoc"
+    sft_data["quality"]["no_post_hoc_rationalization"] = False
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    with pytest.raises(ExportValidationError, match="no_post_hoc_rationalization"):
+        export_sft(store, output)
+
+
+def test_export_allows_post_hoc_rationalization_none(tmp_path):
+    """Export allows samples where no_post_hoc_rationalization is None."""
+    store = _seed_store(tmp_path)
+
+    sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    sft_data["id"] = "sft-20260410-phnone"
+    sft_data["quality"]["no_post_hoc_rationalization"] = None
+    sft_data["review_status"] = "approved"
+    store.save_sample(SFTSample.model_validate(sft_data))
+
+    output = tmp_path / "export.jsonl"
+    count = export_sft(store, output)
+    assert count == 2  # fixture + this one
+
+
+# ── I6: _cap_by_type quality-sorted truncation ───────────────────────
+
+
+def test_cap_by_type_keeps_highest_quality(tmp_path):
+    """_cap_by_type keeps samples with highest quality scores when capping."""
+    from self_tune.export import _cap_by_type
+
+    # Create 3 samples with different quality scores, same sft_type
+    samples = []
+    for i, score in enumerate([0.3, 0.9, 0.6]):
+        sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
+        sft_data["id"] = f"sft-20260410-qs{i:04d}"
+        sft_data["quality"]["local_score"] = score
+        samples.append(SFTSample.model_validate(sft_data))
+
+    capped = _cap_by_type(samples, 2)
+    assert len(capped) == 2
+    scores = {s.quality.local_score for s in capped}
+    # Should keep 0.9 and 0.6, drop 0.3
+    assert scores == {0.9, 0.6}
+
+
+# ── consecutive role validation tests ────────────────────────────────
+
+
+def test_validate_rejects_consecutive_assistant():
+    """_validate_sample rejects consecutive assistant messages."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    data["query"]["conversation_history"] = [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "first response"},
+        {"role": "assistant", "content": "second response"},
+        {"role": "tool", "name": "Bash", "input": "ls", "output": "files"},
+    ]
+    sample = SFTSample.model_validate(data)
+    with pytest.raises(ExportValidationError, match="consecutive 'assistant'"):
+        _validate_sample(sample)
+
+
+def test_validate_allows_consecutive_tool():
+    """_validate_sample allows consecutive tool messages (multiple tool calls)."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    data["query"]["conversation_history"] = [
+        {"role": "user", "content": "fix the bug"},
+        {"role": "assistant", "content": "let me check"},
+        {"role": "tool", "name": "Read", "input": "src/app.py", "output": "code"},
+        {"role": "tool", "name": "Grep", "input": "error", "output": "line 42"},
+        {"role": "assistant", "content": "found it"},
+    ]
+    sample = SFTSample.model_validate(data)
+    _validate_sample(sample)  # should not raise
+
+
+def test_export_allows_content_free_hedging_false():
+    """no_content_free_hedging=False does NOT block export (informational only)."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    data["id"] = "sft-20260410-hedge"
+    data["quality"]["no_content_free_hedging"] = False
+    data["review_status"] = "approved"
+    sample = SFTSample.model_validate(data)
+    _validate_sample(sample)  # should not raise

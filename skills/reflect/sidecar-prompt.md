@@ -52,10 +52,21 @@ Generate two opposing attributions:
 **Attribution B**: "The original approach was also valid because..."
 (assign confidence 0.0-1.0)
 
+**IMPORTANT**: Attribution B must be a genuine steel-man argument, not a strawman.
+Ask yourself: "If a senior engineer defended the original approach, what would they say?"
+Common failure: B.confidence is systematically low because you already know the answer.
+Fight this bias — the original approach often had legitimate reasoning behind it.
+If you cannot articulate a real argument for B with confidence > 0.2, explicitly state why
+the original approach had zero merit (this should be rare).
+
 **Verdict rules:**
 - A.confidence > 0.7 AND B.confidence < 0.3 → `high_confidence`
 - A.confidence > 0.5 AND B.confidence < 0.5 → `moderate`
 - Otherwise → `contested` (still save, but flag for review)
+
+**Contested ratio health check**: If you find yourself generating `high_confidence` on
+every episode, your attribution_b is likely too weak. A healthy distribution has ~15-25%
+`moderate` and ~5-10% `contested`. All-high_confidence is a red flag for systematic bias.
 
 Only generate SFT data for `high_confidence` and `moderate` insights.
 For `contested`, save the Insight but skip SFT generation.
@@ -91,10 +102,26 @@ is not framework-specific.
 | User correction was preference-based | `preference_to_inquiry` |
 | Model persisted in wrong direction | `backtrack_decision` |
 | Model used wrong tools | `tool_orchestration` |
+| Exceptionally efficient session | `success_exemplar` |
 
 #### Query Design
 
 Build the query to reflect real agentic interaction distribution:
+
+**system_context** — use a realistic Claude Code system prompt summary (~500-1000 tokens).
+Include:
+- Role definition ("You are an AI coding assistant using Claude Code")
+- Available tool list (Bash, Read, Edit, Grep, Glob, Write, Agent, LSP, WebSearch, WebFetch)
+- Key behavioral rules (safe code, minimal changes, use dedicated tools over shell)
+- The project context (language, framework, repo structure)
+Do NOT use a 1-sentence placeholder. The model needs to learn to attend to system prompt details.
+
+**conversation_history minimum length**: Target 8-15 messages minimum. Real Claude Code sessions
+have 20-200+ messages. Short histories (3-5 messages) create distribution shift. Include enough
+context for the model to learn realistic multi-turn patterns:
+- At least 2-3 tool call/response cycles before the decision point
+- Prior failed attempts or dead ends when they exist (they are training signal)
+- The full exploration path that led to the decision point
 
 **Source priority for conversation_history (concrete samples):**
 1. Verbatim quotes from the raw conversation excerpt (preferred)
@@ -117,6 +144,21 @@ For abstract variants, see Step 5b — different rules apply.
 - For `user_prompt_internalization`: cut at T_actual (before user hint)
 - For `backtrack_decision`: cut at the moment continuing was no longer rational
 - For `tool_orchestration`: cut before the inefficient tool call
+- For `success_exemplar`: cut at the key decision point where the model chose the
+  efficient path. The CoT should explain WHY this approach was optimal — what signals
+  in the context led to the correct first-try decision. Focus on what the model did RIGHT
+  that's worth reinforcing.
+
+#### Success Exemplar (for success_exemplar)
+
+Use this type when a non-trivial task was completed with exceptional efficiency.
+The goal is positive training signal — reinforcing good behavior, not just correcting bad.
+
+- The query should show the context that made the efficient approach possible
+- The CoT should articulate the reasoning that led to the correct approach on first try
+- Adversarial reflection: attribution_a = "This approach was genuinely efficient because...",
+  attribution_b = "This could have been solved just as easily by other approaches because..."
+- Only generate when the task was genuinely non-trivial (simple lookups don't count)
 
 #### Prompt Internalization (for user_prompt_internalization)
 
@@ -165,6 +207,15 @@ They train the model's judgment and decision-making, not execution.
 - No fabricated tool outputs, no hypothetical execution paths.
 
 #### Quality Self-Check
+
+**local_score calibration table** — use these anchors when assigning quality scores:
+
+| Score | Meaning | Example |
+|-------|---------|---------|
+| 0.3 | Weak: CoT is generic, evidence links are loose, could apply to many scenarios | "The error might be in the config" without citing specific config content |
+| 0.5 | Adequate: CoT references evidence but reasoning is shallow or missing alternatives | Cites the right file but doesn't explain WHY that evidence leads to the conclusion |
+| 0.7 | Good: Evidence-chained reasoning with decision tree, minor gaps acceptable | References specific tool output, weighs 2+ approaches, but one link is hand-wavy |
+| 0.9 | Excellent: Every claim anchored to specific tool output, explicit expect-observe-revise | Full chain from Grep output → hypothesis → Read confirmation → action, no gaps |
 
 Before writing the SFT sample, verify:
 - Cover the CoT and look only at the query — can you derive the conclusion
@@ -255,11 +306,11 @@ Example: `ins-20260410-a3f9c2`
 
 ### Valid Enum Values
 
-**InsightType**: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`, `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`
+**InsightType**: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`, `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`, `success_exemplar`
 
 **InsightStatus**: `active`, `superseded`, `archived`
 
-**SFTType**: `user_prompt_internalization`, `exploration_compression`, `error_correction`, `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`
+**SFTType**: `user_prompt_internalization`, `exploration_compression`, `error_correction`, `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`, `success_exemplar`
 
 **CorrectionType**: `genuine_improvement`, `stylistic_preference`, `factual_error`
 
@@ -273,7 +324,8 @@ Example: `ins-20260410-a3f9c2`
 ```json
 {
   "id": "ins-YYYYMMDD-xxxxxx",
-  "trace_id": "trace-YYYYMMDD-xxxxxx",
+  "trace_id": "trace-YYYYMMDD-xxxxxx or null",
+  "schema_version": "2",
   "created_at": "<ISO8601>",
   "insight_type": "<InsightType>",
   "status": "active",
@@ -319,6 +371,7 @@ Example: `ins-20260410-a3f9c2`
   "id": "sft-YYYYMMDD-xxxxxx",
   "insight_id": "ins-YYYYMMDD-xxxxxx",
   "trace_id": "trace-YYYYMMDD-xxxxxx",
+  "schema_version": "2",
   "created_at": "<ISO8601>",
   "version": "concrete",
   "sft_type": "<SFTType>",
@@ -341,11 +394,6 @@ Example: `ins-20260410-a3f9c2`
     "evidence_anchored": true,
     "no_post_hoc_rationalization": true,
     "no_content_free_hedging": true
-  },
-  "dpo_rejected_available": true,
-  "dpo_rejected": {
-    "response": "<the suboptimal response>",
-    "failure_mode": "<why this response is worse>"
   }
 }
 ```

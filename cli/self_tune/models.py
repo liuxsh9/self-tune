@@ -24,6 +24,16 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}-{today}-{rand}"
 
 
+# ── Schema version ──────────────────────────────────────────────────
+
+SCHEMA_VERSION = "2"
+"""Bump this when making breaking changes to any top-level model.
+
+v1: initial release
+v2: removed DPO fields, added success_exemplar SFT type, expanded AGENTIC_TOOLS
+"""
+
+
 # ── Enums ────────────────────────────────────────────────────────────
 
 
@@ -36,6 +46,7 @@ class InsightType(str, Enum):
     backtrack_failure = "backtrack_failure"
     preference_probe = "preference_probe"
     env_specific = "env_specific"
+    success_exemplar = "success_exemplar"
 
 
 class InsightStatus(str, Enum):
@@ -51,6 +62,7 @@ class SFTType(str, Enum):
     preference_to_inquiry = "preference_to_inquiry"
     backtrack_decision = "backtrack_decision"
     tool_orchestration = "tool_orchestration"
+    success_exemplar = "success_exemplar"
 
 
 class CorrectionAction(str, Enum):
@@ -199,6 +211,7 @@ class CorrectionLesson(BaseModel):
 
 class Trace(BaseModel):
     id: str
+    schema_version: str = SCHEMA_VERSION
     created_at: datetime
     source: str
     model: str
@@ -212,7 +225,8 @@ class Trace(BaseModel):
 
 class Insight(BaseModel):
     id: str
-    trace_id: str
+    trace_id: Optional[str] = None
+    schema_version: str = SCHEMA_VERSION
     created_at: datetime
     insight_type: InsightType
     status: InsightStatus
@@ -232,15 +246,11 @@ class SFTAction(BaseModel):
     input: str | dict[str, Any]
 
 
-class DPORejected(BaseModel):
-    response: str
-    failure_mode: str
-
-
 class SFTSample(BaseModel):
     id: str
     insight_id: str
     trace_id: Optional[str] = None
+    schema_version: str = SCHEMA_VERSION
     created_at: datetime
     version: Literal["concrete", "abstract"]
     sft_type: SFTType
@@ -249,14 +259,13 @@ class SFTSample(BaseModel):
     response: str
     action: Optional[SFTAction] = None
     quality: SFTQualityScore
-    dpo_rejected_available: bool = False
-    dpo_rejected: Optional[DPORejected] = None
     review_status: Literal["pending", "approved", "rejected"] = "pending"
     quality_tier: Literal["standard", "premium"] = "standard"
 
 
 class Correction(BaseModel):
     id: str
+    schema_version: str = SCHEMA_VERSION
     created_at: datetime
     target_type: str
     target_id: str

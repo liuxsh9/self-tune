@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from .store import SelfTuneStore
-from .models import SFTSample, ConversationMessage, SFTAction
+from .models import SFTSample, ConversationMessage, SFTAction, SFTType
 
 # Tool definitions for agentic coding assistant context.
 # These match Claude Code's actual tool set and are included in each
@@ -38,6 +38,8 @@ AGENTIC_TOOLS = [
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "The absolute path to the file"},
+                    "offset": {"type": "integer", "description": "Line number to start reading from"},
+                    "limit": {"type": "integer", "description": "Number of lines to read"},
                 },
                 "required": ["file_path"],
             },
@@ -53,6 +55,10 @@ AGENTIC_TOOLS = [
                 "properties": {
                     "pattern": {"type": "string", "description": "The regex pattern to search for"},
                     "path": {"type": "string", "description": "File or directory to search in"},
+                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Output format"},
+                    "glob": {"type": "string", "description": "Glob pattern to filter files (e.g. '*.py')"},
+                    "type": {"type": "string", "description": "File type to search (e.g. 'py', 'js')"},
+                    "-i": {"type": "boolean", "description": "Case insensitive search"},
                 },
                 "required": ["pattern"],
             },
@@ -67,6 +73,7 @@ AGENTIC_TOOLS = [
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "The glob pattern to match"},
+                    "path": {"type": "string", "description": "Directory to search in"},
                 },
                 "required": ["pattern"],
             },
@@ -83,6 +90,7 @@ AGENTIC_TOOLS = [
                     "file_path": {"type": "string"},
                     "old_string": {"type": "string"},
                     "new_string": {"type": "string"},
+                    "replace_all": {"type": "boolean", "description": "Replace all occurrences"},
                 },
                 "required": ["file_path", "old_string", "new_string"],
             },
@@ -117,6 +125,52 @@ AGENTIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "Write",
+            "description": "Write content to a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["file_path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Agent",
+            "description": "Launch a specialized subagent for complex tasks",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Task description for the subagent"},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "LSP",
+            "description": "Query the Language Server Protocol for code intelligence",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string"},
+                    "filePath": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "character": {"type": "integer"},
+                },
+                "required": ["operation", "filePath", "line", "character"],
+            },
+        },
+    },
 ]
 
 VALID_TOOL_NAMES = {t["function"]["name"] for t in AGENTIC_TOOLS}
@@ -128,10 +182,13 @@ TOOL_INPUT_KEY = {
     "Bash": "command",
     "Read": "file_path",
     "Edit": "file_path",
+    "Write": "file_path",
     "Grep": "pattern",
     "Glob": "pattern",
     "WebSearch": "query",
     "WebFetch": "url",
+    "Agent": "prompt",
+    "LSP": "operation",
 }
 
 
@@ -141,7 +198,7 @@ def _tool_arguments(tool_name: str, input_val: str | dict | None) -> str:
     If input_val is already a dict (structured arguments), serialize it directly.
     If it's a flat string, wrap it in the tool's primary parameter key.
     """
-    if not input_val:
+    if input_val is None:
         return "{}"
     if isinstance(input_val, dict):
         return json.dumps(input_val, ensure_ascii=False)
@@ -181,8 +238,34 @@ def _validate_sample(sample: SFTSample) -> None:
                 f"at positions {i - 1} and {i}"
             )
 
+    # 4. Evidence grounding: reject samples explicitly flagged as not evidence-anchored
+    if sample.quality.evidence_anchored is False:
+        raise ExportValidationError(
+            f"Sample {sample.id}: quality.evidence_anchored=False — "
+            f"CoT may reference information not present in conversation_history"
+        )
 
-def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+    # 5. Post-hoc rationalization: reject samples flagged as containing rationalization
+    if sample.quality.no_post_hoc_rationalization is False:
+        raise ExportValidationError(
+            f"Sample {sample.id}: quality.no_post_hoc_rationalization=False — "
+            f"CoT contains post-hoc rationalization"
+        )
+
+
+def _warn_sample(sample: SFTSample) -> list[str]:
+    """Return non-blocking warnings for an SFT sample."""
+    warnings = []
+    hist_len = len(sample.query.conversation_history)
+    if hist_len < 8:
+        warnings.append(
+            f"Sample {sample.id}: conversation_history has {hist_len} messages "
+            f"(recommended minimum: 8)"
+        )
+    return warnings
+
+
+def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in OpenAI chat fine-tuning format (JSONL).
 
     Format follows OpenAI's supervised fine-tuning spec:
@@ -192,7 +275,7 @@ def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     - weight:0 on context messages (only train on final assistant turn)
     - tools array defining available functions
     """
-    samples = _filter(store.list_samples(), min_score, include_pending)
+    samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
     with output.open("w") as f:
         for sample in samples:
             _validate_sample(sample)
@@ -201,26 +284,18 @@ def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     return len(samples)
 
 
-def export_dpo(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
-    """Export DPO pairs in prompt/chosen/rejected format."""
-    samples = _filter(store.list_samples(), min_score, include_pending)
-    with output.open("w") as f:
-        for sample in samples:
-            pair = _to_dpo_pair(sample)
-            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
-    return len(samples)
 
-
-def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
     """Export raw SFT sample objects as JSONL."""
-    samples = _filter(store.list_samples(), min_score, include_pending)
+    samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
     with output.open("w") as f:
         for sample in samples:
+            _validate_sample(sample)
             f.write(sample.model_dump_json() + "\n")
     return len(samples)
 
 
-def _filter(samples: list[SFTSample], min_score: Optional[float], include_pending: bool = False) -> list[SFTSample]:
+def _filter(samples: list[SFTSample], min_score: Optional[float], include_pending: bool = False, max_per_type: Optional[int] = None) -> list[SFTSample]:
     result = samples
     if include_pending:
         result = [s for s in result if s.review_status in ("approved", "pending")]
@@ -228,7 +303,29 @@ def _filter(samples: list[SFTSample], min_score: Optional[float], include_pendin
         result = [s for s in result if s.review_status == "approved"]
     if min_score is not None:
         result = [s for s in result if (s.quality.local_score or 0) >= min_score]
+    if max_per_type is not None:
+        result = _cap_by_type(result, max_per_type)
     return result
+
+
+def _cap_by_type(samples: list[SFTSample], max_count: int) -> list[SFTSample]:
+    """Cap each sft_type to at most max_count samples.
+
+    Sorts each group by quality score (descending) before truncating,
+    so higher-quality samples survive the cap.
+    """
+    if max_count <= 0:
+        return []
+    from collections import defaultdict
+    by_type: dict[SFTType, list[SFTSample]] = defaultdict(list)
+    for s in samples:
+        by_type[s.sft_type].append(s)
+    capped = []
+    for group in by_type.values():
+        group.sort(key=lambda s: s.quality.local_score or 0, reverse=True)
+        capped.extend(group[:max_count])
+    capped.sort(key=lambda s: s.id)
+    return capped
 
 
 def _to_openai_sft(sample: SFTSample) -> dict:
@@ -336,26 +433,6 @@ def _to_openai_sft(sample: SFTSample) -> dict:
 
     return example
 
-
-def _to_dpo_pair(sample: SFTSample) -> dict:
-    """Convert SFT sample to DPO pair format."""
-    prompt_parts = [f"System: {sample.query.system_context}"]
-    for msg in sample.query.conversation_history:
-        if msg.role == "tool":
-            prompt_parts.append(f"[Tool: {msg.name}] {msg.output}")
-        elif msg.content:
-            prompt_parts.append(f"{msg.role}: {msg.content}")
-    prompt = "\n".join(prompt_parts)
-
-    chosen = f"<think>\n{sample.cot}\n</think>\n\n{sample.response}"
-
-    # Use inline DPO rejected if available, otherwise placeholder
-    if sample.dpo_rejected:
-        rejected = sample.dpo_rejected.response
-    else:
-        rejected = "[original trajectory not stored — link to Trace for full rejected path]"
-
-    return {"prompt": prompt, "chosen": chosen, "rejected": rejected}
 
 
 def _to_anthropic_sft(sample: SFTSample) -> dict:
@@ -507,9 +584,9 @@ def _to_chatml_sft(sample: SFTSample) -> dict:
     return {"messages": messages}
 
 
-def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in Anthropic Messages API format (JSONL)."""
-    samples = _filter(store.list_samples(), min_score, include_pending)
+    samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
     with output.open("w") as f:
         for sample in samples:
             _validate_sample(sample)
@@ -518,9 +595,9 @@ def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[flo
     return len(samples)
 
 
-def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in ChatML format for open-source models (JSONL)."""
-    samples = _filter(store.list_samples(), min_score, include_pending)
+    samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
     with output.open("w") as f:
         for sample in samples:
             _validate_sample(sample)
@@ -650,9 +727,9 @@ def _to_ml2_sft(sample: SFTSample) -> dict:
     return example
 
 
-def export_ml2(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False) -> int:
+def export_ml2(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in extended OpenAI format with reasoning_content (JSONL)."""
-    samples = _filter(store.list_samples(), min_score, include_pending)
+    samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
     with output.open("w") as f:
         for sample in samples:
             _validate_sample(sample)

@@ -1,6 +1,7 @@
 {
   "id": "sft-20260410-g7h8i9",
   "insight_id": "ins-20260410-d4e5f6",
+  "schema_version": "2",
   "created_at": "2026-04-10T14:33:00Z",
   "version": "concrete",
   "sft_type": "exploration_compression",
@@ -17,6 +18,5 @@
   },
   "cot": "Analyzing the tool results:\n1. middleware.ts line 42 uses HS256 (symmetric algorithm)\n2. Both services read JWT_SECRET from env — they share the same secret\n3. This is a microservice architecture where Service B independently verifies tokens\n4. Key reasoning: shared symmetric secrets across services is a security risk\n5. The 'algorithm not allowed' error likely means Service B is configured to reject HS256\n6. Root fix: migrate to RS256 (asymmetric)\n7. Before implementing, check Service B's algorithm whitelist to confirm",
   "response": "The issue is architectural. HS256 requires all services to share a secret, which is a security risk in microservices. Service B likely rejects HS256 by policy. Let me check its algorithm config and then migrate to RS256...",
-  "quality": {"local_score": 0.82, "server_score": null, "evidence_anchored": true, "no_post_hoc_rationalization": true, "no_content_free_hedging": true},
-  "dpo_rejected_available": true
+  "quality": {"local_score": 0.82, "server_score": null, "evidence_anchored": true, "no_post_hoc_rationalization": true, "no_content_free_hedging": true}
 }

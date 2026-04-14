@@ -38,7 +38,7 @@ Two independent halves that share a data contract:
 **CLI side** (`cli/self_tune/`) — Python package for storage and export:
 - `models.py` — **single source of truth** for all data schemas (Pydantic v2)
 - `store.py` — file-based persistence at `~/.self-tune/data/`
-- `export.py` — converts samples to OpenAI SFT, DPO, or raw JSONL format
+- `export.py` — converts samples to OpenAI SFT, Anthropic, ChatML, ML2, or raw JSONL format
 - `cli.py` — Click entry point
 
 **Data flow**: Skill detects trigger → dispatches background subagent with prompt template + schema → subagent writes JSON to `~/.self-tune/data/` → CLI reads/exports.
@@ -51,11 +51,11 @@ Two independent halves that share a data contract:
 
 **The Iron Law:** Every claim in SFT CoT must be derivable from evidence in the query's conversation_history. No post-hoc rationalization, no information leakage.
 
-**Export validation** (`ExportValidationError`): action.tool must be in AGENTIC_TOOLS (Bash, Read, Grep, Glob, Edit, WebSearch, WebFetch), empty response + null action is rejected, consecutive same-role messages (user-user, assistant-assistant) are rejected.
+**Export validation** (`ExportValidationError`): action.tool must be in AGENTIC_TOOLS (Bash, Read, Grep, Glob, Edit, Write, Agent, LSP, WebSearch, WebFetch), empty response + null action is rejected, consecutive same-role messages are rejected, evidence_anchored=False is rejected.
 
 **version field** on SFTSample is `Literal["concrete", "abstract"]`, not a free string.
 
-**Subagents run in background** with `model: "sonnet"` to avoid blocking the user or consuming opus tokens.
+**Subagents run in background** with `model: "opus"` (default in Claude Code context) to ensure high CoT quality.
 
 ## ID Format
 

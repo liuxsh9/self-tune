@@ -42,6 +42,9 @@ Generate two opposing attributions:
 **Attribution B**: "The original insight was actually valid because..."
 (assign confidence 0.0-1.0)
 
+**IMPORTANT**: Attribution B must be a genuine steel-man. Ask: "If the original author
+defended their insight, what would they say?" Systematically low B.confidence is a red flag.
+
 Verdict rules:
 - A.confidence > 0.7 AND B.confidence < 0.3 → `high_confidence` → proceed
 - A.confidence > 0.5 AND B.confidence < 0.5 → `moderate` → proceed with caution
@@ -86,6 +89,11 @@ The correction produces a valuable SFT sample of type `error_correction`.
 Only generate for `high_confidence` and `moderate` verdicts.
 
 **Query design:**
+- **system_context**: Use a realistic Claude Code system prompt summary (~500-1000 tokens).
+  Include role definition, available tool list, key behavioral rules, and project context.
+  Do NOT use a 1-sentence placeholder.
+- **conversation_history minimum length**: Target 8-15 messages minimum. Include at least 2-3 tool
+  call/response cycles before the decision point.
 - Query: the context where the old (wrong) approach seemed correct
 - Cut at the decision point where the wrong approach was chosen
 - Include prior reasoning that led to the mistake (it is training signal)
@@ -112,6 +120,15 @@ Only generate for `high_confidence` and `moderate` verdicts.
 - Over-explaining basics: "package.json is a Node.js config file..." — REMOVE
 - Fabricated execution: response must NEVER contain hypothetical tool outputs,
   imagined results, or narrated multi-step execution — REJECT entire sample
+
+**local_score calibration table:**
+
+| Score | Meaning |
+|-------|---------|
+| 0.3 | Weak: generic CoT, loose evidence links |
+| 0.5 | Adequate: references evidence but shallow |
+| 0.7 | Good: evidence-chained, minor gaps ok |
+| 0.9 | Excellent: every claim anchored, expect-observe-revise |
 
 **Quality self-check before writing:**
 - Cover the CoT and look only at the query — can you derive the conclusion
@@ -142,6 +159,7 @@ Report a one-line summary (e.g., "Correction applied: superseded ins-20260410-a3
 ```json
 {
   "id": "cor-YYYYMMDD-XXXXXX",
+  "schema_version": "2",
   "created_at": "ISO8601",
   "target_type": "insight",
   "target_id": "ins-YYYYMMDD-XXXXXX",

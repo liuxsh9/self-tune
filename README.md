@@ -77,7 +77,7 @@ self-tune/
 ├── cli/self_tune/             # CLI side (Python package)
 │   ├── models.py              # Single source of truth for all schemas
 │   ├── store.py               # File-based persistence (~/.self-tune/data/)
-│   ├── export.py              # SFT / DPO / raw JSONL export
+│   ├── export.py              # Multi-format SFT export (OpenAI, Anthropic, ChatML, ML2)
 │   └── cli.py                 # Click entry point
 │
 └── tests/                     # Pytest suite
@@ -104,7 +104,7 @@ self-tune/
 ┌─────────────────────────────────────────────────────────────────┐
 │                      CLI (self-tune)                             │
 │                                                                 │
-│  stats · list · show · export (SFT / DPO / raw JSONL)           │
+│  stats · list · show · validate · export · review                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,9 +139,6 @@ self-tune show sft-20260410-a1b2c3
 # Export SFT training data (OpenAI chat format)
 self-tune export --format sft -o training.jsonl
 
-# Export DPO preference pairs (chosen/rejected)
-self-tune export --format dpo -o preference.jsonl
-
 # Export everything as raw JSONL
 self-tune export --format raw -o dump.jsonl
 ```
@@ -157,7 +154,7 @@ All data lives under `~/.self-tune/` (created by `./install.sh`):
 └── data/
     ├── traces/          # Session-level records of what happened
     ├── insights/        # Structured diagnoses (root cause, generalization)
-    ├── samples/         # Training-ready SFT / DPO samples
+    ├── samples/         # Training-ready SFT samples
     └── corrections/     # Amendments to historical insights
 ```
 

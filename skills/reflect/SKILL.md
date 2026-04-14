@@ -35,10 +35,13 @@ Invoke this skill when ANY of these are true:
 - You discover that a previous solution was actually incorrect
 - A task completed successfully but took significantly more rounds than necessary
   (e.g., 8+ tool calls for something achievable in 2-3)
+- A non-trivial task was completed with exceptional efficiency (e.g., correct approach
+  on first attempt, minimal tool calls, no backtracking) — use `success_exemplar` type
 
 ## When NOT to Invoke
 
 - The task proceeded smoothly, efficiently, and without notable friction
+  (UNLESS it was exceptionally efficient on a non-trivial task — that's success_exemplar)
 - The only "issue" was gathering routine requirements
 - During an active systematic-debugging session (wait until it concludes)
 - Inside a subagent (only invoke from the main conversation)
@@ -126,13 +129,14 @@ Use the Agent tool with these parameters:
 - `run_in_background: true` (never block main workflow)
 - `mode: "bypassPermissions"` (subagent needs to write to ~/.self-tune/data/)
 - `model`: Choose based on episode value:
-  - **"sonnet"** (default): For most episodes — sufficient for straightforward corrections
+  - **"opus"** (default): For all sidecar episodes in Claude Code context — CoT quality is critical
   - **"opus"**: For high-value episodes where CoT quality is critical. Use opus when ANY of:
     - The adversarial verdict is clearly `high_confidence` and wasted_rounds > 5
     - The episode involves complex multi-step reasoning errors
     - The episode captures a rare failure mode (model persisted in wrong direction
       across 3+ attempts, or a previously-accepted solution turned out to be wrong)
-  - When in doubt, use sonnet. The cost difference is significant.
+  - **"sonnet"**: For lower-value episodes — straightforward corrections, simple patterns
+  - When in doubt, use opus in Claude Code context. CoT quality matters more than cost here.
 
 The prompt MUST include:
 1. The context package from Step 2 (above), including the raw conversation excerpt —

@@ -63,6 +63,11 @@ Generate two opposing attributions for the episode:
 **Attribution B**: "The original approach was also valid because..."
 (assign confidence 0.0-1.0)
 
+**IMPORTANT**: Attribution B must be a genuine steel-man, not a strawman. Ask yourself:
+"If a senior engineer defended the original approach, what would they say?" If B.confidence
+is consistently < 0.2, your steel-manning is too weak. A healthy distribution has ~15-25%
+`moderate` and ~5-10% `contested` verdicts.
+
 Verdict rules:
 - A.confidence > 0.7 AND B.confidence < 0.3 → `high_confidence`
 - A.confidence > 0.5 AND B.confidence < 0.5 → `moderate`
@@ -101,8 +106,14 @@ is not framework-specific.
 | User correction was preference-based | `preference_to_inquiry` |
 | Model persisted in wrong direction | `backtrack_decision` |
 | Model used wrong tools | `tool_orchestration` |
+| Exceptionally efficient session | `success_exemplar` |
 
 **Query design:**
+- **system_context**: Use a realistic Claude Code system prompt summary (~500-1000 tokens).
+  Include role definition, available tool list (Bash, Read, Edit, Grep, Glob, Write, Agent, LSP,
+  WebSearch, WebFetch), key behavioral rules, and project context. Do NOT use a 1-sentence placeholder.
+- **conversation_history minimum length**: Target 8-15 messages minimum. Include at least 2-3 tool
+  call/response cycles before the decision point. Prior failed attempts are training signal.
 - Assistant-tool interactions dominate (realistic distribution)
 - User messages are minimal (typically 1-3 turns)
 - Keep tool results that contain decision-relevant information
@@ -122,6 +133,8 @@ is not framework-specific.
 - For `user_prompt_internalization`: cut at T_actual (before user hint)
 - For `backtrack_decision`: cut at the moment continuing was no longer rational
 - For `tool_orchestration`: cut before the inefficient tool call
+- For `success_exemplar`: cut at the key decision point; CoT explains WHY the efficient
+  approach was chosen. Only for genuinely non-trivial tasks completed on first try.
 
 **Prompt internalization (for user_prompt_internalization):**
 The user's hint is the learning signal SOURCE but must NOT appear in the query.
@@ -150,6 +163,15 @@ Transform the user's wisdom into the model's own reasoning in the CoT:
   multi-parameter tools (e.g., `{"tool": "Edit", "input": {"file_path": "src/main.py", "old_string": "foo", "new_string": "bar"}}`).
   Set `response` to a brief intent description. Do NOT narrate execution beyond the first action.
 - When the correct move is a direct reply: set `action` to null, set `response` to the ideal message.
+
+**local_score calibration table:**
+
+| Score | Meaning | Example |
+|-------|---------|---------|
+| 0.3 | Weak: generic CoT, loose evidence links | "The error might be in the config" without citing specific content |
+| 0.5 | Adequate: references evidence but shallow reasoning | Cites the right file but doesn't explain why |
+| 0.7 | Good: evidence-chained with decision tree, minor gaps ok | Specific tool output, 2+ approaches weighed |
+| 0.9 | Excellent: every claim anchored, explicit expect-observe-revise | Full chain from Grep → hypothesis → Read confirmation → action |
 
 **Quality self-check before writing:**
 - Cover the CoT and look only at the query — can you derive the conclusion
@@ -231,10 +253,10 @@ Report summary: "Retrospective: found N episodes, generated M insights, K SFT sa
 **Valid enum values:**
 
 - InsightType: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`,
-  `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`
+  `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`, `success_exemplar`
 - InsightStatus: `active`, `superseded`, `archived`
 - SFTType: `user_prompt_internalization`, `exploration_compression`, `error_correction`,
-  `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`
+  `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`, `success_exemplar`
 - CorrectionAction: `supersede`, `amend`, `retract`
 - AdversarialVerdict: `high_confidence`, `moderate`, `contested`
 - ID prefixes: `trace`, `ins`, `sft`, `cor`
@@ -248,6 +270,7 @@ Report summary: "Retrospective: found N episodes, generated M insights, K SFT sa
 ```json
 {
   "id": "cor-YYYYMMDD-XXXXXX",
+  "schema_version": "2",
   "created_at": "ISO8601",
   "target_type": "insight",
   "target_id": "ins-YYYYMMDD-XXXXXX",
