@@ -41,18 +41,17 @@ else
     echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/reflect"
 fi
 
-# 5. Install CLI (optional — requires Python 3.10+)
-if command -v python3 &>/dev/null; then
-    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    if python3 -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
-        echo "Installing CLI tool (Python $PYTHON_VERSION)..."
-        pip install -e "$SCRIPT_DIR/cli/" --quiet
-        echo "CLI installed: run 'self-tune --help'"
-    else
-        echo "Python $PYTHON_VERSION found but >=3.10 required. Skipping CLI install."
-    fi
+# 5. Install CLI (optional — prefers uv, falls back to pip)
+if command -v uv &>/dev/null; then
+    echo "Installing CLI tool via uv..."
+    uv tool install --from "$SCRIPT_DIR" self-tune
+    echo "CLI installed: run 'self-tune --help'"
+elif command -v pip &>/dev/null; then
+    echo "uv not found, falling back to pip..."
+    pip install "$SCRIPT_DIR" --quiet
+    echo "CLI installed: run 'self-tune --help'"
 else
-    echo "Python not found. Skipping CLI install. Skill works without it."
+    echo "Neither uv nor pip found. Skipping CLI install. Skill works without it."
 fi
 
 echo ""

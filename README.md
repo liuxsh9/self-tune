@@ -120,7 +120,7 @@ The installer does three things:
 
 1. **Data directory** -- creates `~/.self-tune/data/` with subdirectories for traces, insights, samples, and corrections
 2. **Skill** -- symlinks `skills/reflect/` into `~/.claude/skills/reflect/` so Claude Code discovers it automatically
-3. **CLI** -- installs the `self-tune` command via pip (requires Python 3.10+; consider using a virtualenv)
+3. **CLI** -- installs the `self-tune` command via uv (preferred) or pip (fallback). Requires Python 3.10+.
 
 After installation, the reflect skill activates automatically in future Claude Code sessions. No configuration required.
 
@@ -174,18 +174,16 @@ Each file is standalone JSON, named by its ID. No database required.
 
 ```bash
 # Set up dev environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e cli/
+uv sync
 
 # Run the test suite
-.venv/bin/pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run a single test file
-.venv/bin/pytest tests/test_export.py
+uv run pytest tests/test_export.py
 
 # Run a specific test
-.venv/bin/pytest tests/ -k "test_name"
+uv run pytest tests/ -k "test_name"
 ```
 
 ## Contributing

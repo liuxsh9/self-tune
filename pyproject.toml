@@ -15,3 +15,9 @@ dependencies = [
 
 [project.scripts]
 self-tune = "self_tune.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cli/self_tune"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

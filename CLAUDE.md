@@ -9,19 +9,19 @@ Self-tune is a Claude Code skill + CLI that extracts SFT training data from codi
 ## Commands
 
 ```bash
-# Tests (use the project venv)
-.venv/bin/pytest tests/ -v              # full suite (25 tests)
-.venv/bin/pytest tests/test_export.py   # single file
-.venv/bin/pytest tests/ -k "test_name"  # single test
+# Tests
+uv run pytest tests/ -v              # full suite (86 tests)
+uv run pytest tests/test_export.py   # single file
+uv run pytest tests/ -k "test_name"  # single test
 
-# Install package in dev mode
-.venv/bin/python -m pip install -e cli/
+# Sync dependencies (creates .venv if needed)
+uv sync
 
 # CLI
-self-tune stats
-self-tune list --type samples
-self-tune show sft-20260410-a1b2c3
-self-tune export --format sft -o training.jsonl
+uv run self-tune stats
+uv run self-tune list --type samples
+uv run self-tune show sft-20260410-a1b2c3
+uv run self-tune export --format sft -o training.jsonl
 ```
 
 ## Architecture
