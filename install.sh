@@ -6,58 +6,120 @@ SELF_TUNE_HOME="$HOME/.self-tune"
 SKILL_DIR="$HOME/.claude/skills/reflect"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Self-tune Installer ==="
+# ── Colors ──────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    CYAN='\033[36m'
+    GREEN='\033[32m'
+    YELLOW='\033[33m'
+    RESET='\033[0m'
+else
+    BOLD='' DIM='' CYAN='' GREEN='' YELLOW='' RESET=''
+fi
 
-# 1. Create data directory structure
-echo "Creating data directories..."
+# ── Banner ──────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}Self-tune Installer${RESET}"
+echo -e "${DIM}────────────────────────────────────────────────────${RESET}"
+echo ""
+echo -e "  Self-tune silently watches your Claude Code sessions."
+echo -e "  When the model fails, retries, or gets corrected, a background"
+echo -e "  agent extracts the lesson as structured SFT training data."
+echo ""
+echo -e "  ${DIM}Your workflow is never blocked — all analysis runs in the background.${RESET}"
+echo ""
+
+# ── What will happen ────────────────────────────────────────────────
+echo -e "${BOLD}What this installer does:${RESET}"
+echo ""
+echo -e "  ${CYAN}1.${RESET} Create data directory           ${DIM}~/.self-tune/data/${RESET}"
+echo -e "  ${CYAN}2.${RESET} Write default config             ${DIM}~/.self-tune/config.yaml${RESET}"
+echo -e "  ${CYAN}3.${RESET} Symlink skill into Claude Code   ${DIM}~/.claude/skills/reflect${RESET}"
+echo -e "  ${CYAN}4.${RESET} Install CLI tool (optional)      ${DIM}self-tune${RESET}"
+echo ""
+echo -e "${DIM}────────────────────────────────────────────────────${RESET}"
+echo ""
+
+# ── Step 1: Data directories ───────────────────────────────────────
+echo -e "${CYAN}[1/4]${RESET} Creating data directories..."
 mkdir -p "$SELF_TUNE_HOME/data/traces"
 mkdir -p "$SELF_TUNE_HOME/data/insights"
 mkdir -p "$SELF_TUNE_HOME/data/samples"
 mkdir -p "$SELF_TUNE_HOME/data/corrections"
 
-# 2. Create default config if not exists
+# ── Step 2: Config ──────────────────────────────────────────────────
+echo -e "${CYAN}[2/4]${RESET} Setting up config..."
 if [ ! -f "$SELF_TUNE_HOME/config.yaml" ]; then
-    echo "Creating default config..."
     cp "$SCRIPT_DIR/config.yaml.template" "$SELF_TUNE_HOME/config.yaml"
+    echo -e "       Created ${DIM}~/.self-tune/config.yaml${RESET}"
 else
-    echo "Config already exists, skipping."
+    echo -e "       Already exists, skipping."
 fi
 
-# 3. Create index.json if not exists
 if [ ! -f "$SELF_TUNE_HOME/index.json" ]; then
     echo '{"last_updated": null, "stats": {"total_traces": 0, "total_insights": 0, "total_samples": 0, "total_corrections": 0}}' > "$SELF_TUNE_HOME/index.json"
 fi
 
-# 4. Symlink skill to Claude Code skills directory
-echo "Installing skill..."
+# ── Step 3: Skill symlink ──────────────────────────────────────────
+echo -e "${CYAN}[3/4]${RESET} Installing skill..."
 mkdir -p "$HOME/.claude/skills"
 if [ -L "$SKILL_DIR" ]; then
     rm "$SKILL_DIR"
 fi
 if [ -d "$SKILL_DIR" ]; then
-    echo "WARNING: $SKILL_DIR is a real directory, not a symlink. Skipping."
+    echo -e "       ${YELLOW}WARNING${RESET}: $SKILL_DIR is a real directory, not a symlink. Skipping."
 else
     ln -s "$SCRIPT_DIR/skills/reflect" "$SKILL_DIR"
-    echo "Skill symlinked: $SKILL_DIR -> $SCRIPT_DIR/skills/reflect"
+    echo -e "       Symlinked → ${DIM}$SCRIPT_DIR/skills/reflect${RESET}"
 fi
 
-# 5. Install CLI (optional — prefers uv, falls back to pip)
+# ── Step 4: CLI ─────────────────────────────────────────────────────
+echo -e "${CYAN}[4/4]${RESET} Installing CLI..."
 if command -v uv &>/dev/null; then
-    echo "Installing CLI tool via uv..."
-    uv tool install --from "$SCRIPT_DIR" self-tune
-    echo "CLI installed: run 'self-tune --help'"
+    uv tool install --force --from "$SCRIPT_DIR" self-tune 2>/dev/null \
+        && echo -e "       Installed via ${BOLD}uv${RESET}" \
+        || echo -e "       ${YELLOW}uv tool install failed — try manually: uv tool install --from $SCRIPT_DIR self-tune${RESET}"
 elif command -v pip &>/dev/null; then
-    echo "uv not found, falling back to pip..."
-    pip install "$SCRIPT_DIR" --quiet
-    echo "CLI installed: run 'self-tune --help'"
+    pip install "$SCRIPT_DIR" --quiet \
+        && echo -e "       Installed via ${BOLD}pip${RESET}" \
+        || echo -e "       ${YELLOW}pip install failed — try manually: pip install $SCRIPT_DIR${RESET}"
 else
-    echo "Neither uv nor pip found. Skipping CLI install. Skill works without it."
+    echo -e "       ${YELLOW}Skipped${RESET} — neither uv nor pip found."
+    echo -e "       Install uv (${DIM}curl -LsSf https://astral.sh/uv/install.sh | sh${RESET}) then re-run."
 fi
 
+# ── Done ────────────────────────────────────────────────────────────
 echo ""
-echo "=== Installation complete ==="
-echo "  Data:   $SELF_TUNE_HOME/"
-echo "  Skill:  $SKILL_DIR"
-echo "  Config: $SELF_TUNE_HOME/config.yaml"
+echo -e "${DIM}────────────────────────────────────────────────────${RESET}"
+echo -e "${GREEN}${BOLD}Done!${RESET}"
 echo ""
-echo "The reflect skill will auto-activate in Claude Code sessions."
+echo -e "${BOLD}How it works:${RESET}"
+echo ""
+echo -e "  The skill is a ${BOLD}symlink${RESET} — it always points to this repo."
+echo -e "  To update, just pull the latest code:"
+echo ""
+echo -e "    ${DIM}cd $SCRIPT_DIR && git pull${RESET}"
+echo ""
+echo -e "  No reinstall needed. The skill picks up changes immediately."
+echo -e "  (If the CLI itself changed, re-run ${DIM}./install.sh${RESET} to update it.)"
+echo ""
+echo -e "${BOLD}Getting started:${RESET}"
+echo ""
+echo -e "  Just use Claude Code normally. Self-tune activates automatically"
+echo -e "  when the model retries, gets corrected, or takes an inefficient path."
+echo ""
+echo -e "  After a few sessions, check what was captured:"
+echo ""
+echo -e "    ${CYAN}self-tune stats${RESET}                         overview"
+echo -e "    ${CYAN}self-tune list --type samples${RESET}            browse SFT samples"
+echo -e "    ${CYAN}self-tune show ${DIM}<id>${RESET}                       inspect one item"
+echo -e "    ${CYAN}self-tune validate${RESET}                      check data integrity"
+echo -e "    ${CYAN}self-tune export -f sft -o train.jsonl${RESET}  export for fine-tuning"
+echo ""
+echo -e "${BOLD}File locations:${RESET}"
+echo ""
+echo -e "    Data    ${DIM}~/.self-tune/data/${RESET}               traces, insights, samples"
+echo -e "    Config  ${DIM}~/.self-tune/config.yaml${RESET}         trigger & retention settings"
+echo -e "    Skill   ${DIM}~/.claude/skills/reflect${RESET}         symlink → this repo"
+echo ""
