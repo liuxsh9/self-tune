@@ -72,7 +72,7 @@ def test_sft_sample_from_fixture():
     sample = SFTSample.model_validate(data)
     assert sample.id == "sft-20260410-g7h8i9"
     assert sample.sft_type == SFTType.exploration_compression
-    # Ensure all 6 SFT types exist
+    # Ensure all SFT types exist
     expected_types = {
         "user_prompt_internalization",
         "exploration_compression",
@@ -81,6 +81,7 @@ def test_sft_sample_from_fixture():
         "backtrack_decision",
         "tool_orchestration",
         "success_exemplar",
+        "diagnostic_recovery",
     }
     actual_types = {t.value for t in SFTType}
     assert expected_types == actual_types

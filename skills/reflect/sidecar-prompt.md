@@ -103,8 +103,7 @@ is not framework-specific.
 | Model persisted in wrong direction | `backtrack_decision` |
 | Model used wrong tools | `tool_orchestration` |
 | Exceptionally efficient session | `success_exemplar` |
-
-#### Query Design
+| Model's action failed but error output contains diagnostic info | `diagnostic_recovery` |
 
 Build the query to reflect real agentic interaction distribution:
 
@@ -116,12 +115,16 @@ Include:
 - The project context (language, framework, repo structure)
 Do NOT use a 1-sentence placeholder. The model needs to learn to attend to system prompt details.
 
-**conversation_history minimum length**: Target 8-15 messages minimum. Real Claude Code sessions
-have 20-200+ messages. Short histories (3-5 messages) create distribution shift. Include enough
-context for the model to learn realistic multi-turn patterns:
-- At least 2-3 tool call/response cycles before the decision point
-- Prior failed attempts or dead ends when they exist (they are training signal)
-- The full exploration path that led to the decision point
+**conversation_history length**: Include enough context for the model to understand
+WHY it's facing this decision point. Do not pad artificially — a 5-message history
+that captures the full decision context is better than an 8-message history padded
+with irrelevant turns.
+- Signal-recognition types (`exploration_compression`, `success_exemplar`,
+  `user_prompt_internalization`): typically 8-15 messages
+- Recovery types (`diagnostic_recovery`): typically 4-8 messages — tight focus
+  on the failure + diagnostic reasoning
+- Decision types (`backtrack_decision`, `tool_orchestration`): typically 6-12 messages
+- These are guidelines, not floors. Natural context length varies.
 
 **Source priority for conversation_history (concrete samples):**
 1. Verbatim quotes from the raw conversation excerpt (preferred)
@@ -139,17 +142,26 @@ For abstract variants, see Step 5b — different rules apply.
 - Include prior failed attempts (they are training signal)
 - Target query length: 1000-3000 tokens
 
-**Cut point:**
-- For `exploration_compression`: cut at T_optimal
+**Cut point** (where the conversation_history ends and the CoT begins):
+- For `exploration_compression`: cut at T_optimal — the model sees context up to the
+  point where the right signal was already available, and the CoT teaches the correct
+  judgment from that point. Do NOT include post-T_optimal failure rounds — those
+  replicate the model's existing failure distribution and add no new judgment signal.
 - For `user_prompt_internalization`: cut at T_actual (before user hint)
-- For `backtrack_decision`: cut at the moment continuing was no longer rational
+- For `backtrack_decision`: cut at the moment continuing was no longer rational —
+  the CoT teaches the model to recognize "this is where I should have stopped."
+  Do NOT include the rounds after this point.
 - For `tool_orchestration`: cut before the inefficient tool call
 - For `success_exemplar`: cut at the key decision point where the model chose the
   efficient path. The CoT should explain WHY this approach was optimal — what signals
   in the context led to the correct first-try decision. Focus on what the model did RIGHT
   that's worth reinforcing.
-
-#### Success Exemplar (for success_exemplar)
+- For `diagnostic_recovery`: cut AFTER exactly one failed attempt and its error output.
+  The conversation_history includes prior context + the failed tool call + the tool's
+  error/unexpected output. The CoT applies expect-observe-revise to the model's own
+  prior action: what was expected, what happened, what the delta reveals, what the
+  correct recovery is. If the episode has multiple failures, select the ONE whose
+  output contains the most diagnostic information. Do NOT include multiple failure rounds.
 
 Use this type when a non-trivial task was completed with exceptional efficiency.
 The goal is positive training signal — reinforcing good behavior, not just correcting bad.
@@ -159,6 +171,21 @@ The goal is positive training signal — reinforcing good behavior, not just cor
 - Adversarial reflection: attribution_a = "This approach was genuinely efficient because...",
   attribution_b = "This could have been solved just as easily by other approaches because..."
 - Only generate when the task was genuinely non-trivial (simple lookups don't count)
+
+#### Diagnostic Recovery (for diagnostic_recovery)
+
+Use this type when the model's action failed but the error output contains diagnostic
+information that enables a targeted recovery. The goal is to train the model to
+extract meaning from its own failures instead of retrying blindly.
+
+- The conversation_history MUST include exactly one failed tool call + its error output
+- The CoT MUST follow the expect-observe-revise pattern applied to the model's own
+  prior action: "I expected X, but got Y. The error '[specific text]' indicates Z.
+  Therefore the correct recovery is W because [evidence]."
+- Do NOT include multiple failure rounds — pick the most informative one
+- A single episode can produce BOTH a hindsight sample (cut at T_optimal) and a
+  recovery sample (cut after failure). These are complementary.
+- Skip abstract variants for this type until quality can be assessed over 20+ samples.
 
 #### Prompt Internalization (for user_prompt_internalization)
 
@@ -242,11 +269,19 @@ SFT sample with `version: "abstract"`:
 5. Update `decision_point` to describe the abstract scenario
 6. Set `version: "abstract"` and use a new `sft-` ID
 7. Keep the same `insight_id` and `trace_id` as the concrete version
+8. **Abstract the `action` and `response` fields**: Replace framework-specific identifiers
+   (package names, API endpoints, CLI flags) with angle-bracket placeholders:
+   `<package-name>`, `<api-endpoint>`, `<config-flag>`. Do NOT invent fake-but-plausible
+   names (e.g., `pure-language-pdf-lib`). The placeholder must be obviously non-literal.
+   If the action cannot be meaningfully abstracted, set `action` to null and express the
+   intent in `response` instead.
 
 **Abstract conversation_history rules** (these override the "NEVER reconstruct" rule
 which applies only to concrete samples):
 - The abstract variant is a **structure-preserving substitution** of the concrete one
-- Same number of turns, same roles, same decision flow — only surface labels change
+- Same number of turns, same roles, same decision flow — only surface labels change.
+  Use angle-bracket placeholders (`<package-name>`, `<framework>`) for substitutions,
+  not invented names that could be mistaken for real packages or APIs.
 - You may NOT add, remove, or reorder turns
 - You may NOT invent new tool outputs or information not present in the concrete version
 - Set `source: "reconstructed"` on ALL messages in abstract variants
@@ -306,11 +341,11 @@ Example: `ins-20260410-a3f9c2`
 
 ### Valid Enum Values
 
-**InsightType**: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`, `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`, `success_exemplar`
+**InsightType**: `skill_gap`, `knowledge_gap`, `reasoning_error`, `exploration_inefficiency`, `tool_orchestration`, `backtrack_failure`, `preference_probe`, `env_specific`, `success_exemplar`, `diagnostic_recovery`
 
 **InsightStatus**: `active`, `superseded`, `archived`
 
-**SFTType**: `user_prompt_internalization`, `exploration_compression`, `error_correction`, `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`, `success_exemplar`
+**SFTType**: `user_prompt_internalization`, `exploration_compression`, `error_correction`, `preference_to_inquiry`, `backtrack_decision`, `tool_orchestration`, `success_exemplar`, `diagnostic_recovery`
 
 **CorrectionType**: `genuine_improvement`, `stylistic_preference`, `factual_error`
 

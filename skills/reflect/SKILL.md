@@ -93,6 +93,10 @@ or unnecessary extra rounds taken]
 **User intervention:** [Exact quote, or "none" if self-discovered or efficiency-only]
 **Correct approach:** [What actually worked or should have been done]
 **Key evidence missed:** [Specific tool output that contained the signal]
+**Recoverable failure?** [If the episode contains a failed attempt whose error output
+has diagnostic value, note it here. The subagent may generate BOTH a hindsight sample
+(cut at T_optimal) AND a `diagnostic_recovery` sample (cut after the failure) from
+the same episode. Include the failure + error output in the raw excerpt.]
 
 ## Environment
 - Language: [e.g., Python 3.12]

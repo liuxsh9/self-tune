@@ -817,6 +817,16 @@ def test_warn_sample_short_history():
     assert "conversation_history" in warnings[0]
 
 
+def test_warn_sample_recovery_type_lower_threshold():
+    """diagnostic_recovery with 5 messages should NOT warn (threshold is 4)."""
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    data["sft_type"] = "diagnostic_recovery"
+    # Fixture has 5 messages, threshold for diagnostic_recovery is 4 → no warning
+    sample = SFTSample.model_validate(data)
+    warnings = _warn_sample(sample)
+    assert len(warnings) == 0
+
+
 def test_warn_sample_long_history_no_warning():
     """_warn_sample returns empty list for history with >= 8 messages."""
     data = json.loads((FIXTURES / "sample_sft.json").read_text())

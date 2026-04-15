@@ -47,6 +47,7 @@ class InsightType(str, Enum):
     preference_probe = "preference_probe"
     env_specific = "env_specific"
     success_exemplar = "success_exemplar"
+    diagnostic_recovery = "diagnostic_recovery"
 
 
 class InsightStatus(str, Enum):
@@ -63,6 +64,7 @@ class SFTType(str, Enum):
     backtrack_decision = "backtrack_decision"
     tool_orchestration = "tool_orchestration"
     success_exemplar = "success_exemplar"
+    diagnostic_recovery = "diagnostic_recovery"
 
 
 class CorrectionAction(str, Enum):

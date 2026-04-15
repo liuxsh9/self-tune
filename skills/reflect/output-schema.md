@@ -23,9 +23,9 @@ Example: `ins-20260410-a3f2c1`
 
 | Enum | Values |
 |------|--------|
-| `InsightType` | `skill_gap` `knowledge_gap` `reasoning_error` `exploration_inefficiency` `tool_orchestration` `backtrack_failure` `preference_probe` `env_specific` `success_exemplar` |
+| `InsightType` | `skill_gap` `knowledge_gap` `reasoning_error` `exploration_inefficiency` `tool_orchestration` `backtrack_failure` `preference_probe` `env_specific` `success_exemplar` `diagnostic_recovery` |
 | `InsightStatus` | `active` `superseded` `archived` |
-| `SFTType` | `user_prompt_internalization` `exploration_compression` `error_correction` `preference_to_inquiry` `backtrack_decision` `tool_orchestration` `success_exemplar` |
+| `SFTType` | `user_prompt_internalization` `exploration_compression` `error_correction` `preference_to_inquiry` `backtrack_decision` `tool_orchestration` `success_exemplar` `diagnostic_recovery` |
 | `CorrectionType` | `genuine_improvement` `stylistic_preference` `factual_error` |
 | `CorrectionAction` | `supersede` `amend` `retract` |
 | `TriggerMode` | `auto` `manual` `scheduled` `sidecar` `retrospective` `user_correction` |
@@ -73,7 +73,7 @@ Example: `ins-20260410-a3f2c1`
   "trace_id": "trace-YYYYMMDD-XXXXXX or null",
   "schema_version": "2",
   "created_at": "ISO8601",
-  "insight_type": "skill_gap|knowledge_gap|reasoning_error|exploration_inefficiency|tool_orchestration|backtrack_failure|preference_probe|env_specific|success_exemplar",
+  "insight_type": "skill_gap|knowledge_gap|reasoning_error|exploration_inefficiency|tool_orchestration|backtrack_failure|preference_probe|env_specific|success_exemplar|diagnostic_recovery",
   "status": "active|superseded|archived",
   "root_cause": {
     "concrete": "Specific description of what went wrong",
@@ -119,7 +119,7 @@ Example: `ins-20260410-a3f2c1`
   "schema_version": "2",
   "created_at": "ISO8601",
   "version": "concrete|abstract",
-  "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration|success_exemplar",
+  "sft_type": "user_prompt_internalization|exploration_compression|error_correction|preference_to_inquiry|backtrack_decision|tool_orchestration|success_exemplar|diagnostic_recovery",
   "query": {
     "system_context": "System prompt for the scenario",
     "conversation_history": [

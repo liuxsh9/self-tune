@@ -257,10 +257,17 @@ def _warn_sample(sample: SFTSample) -> list[str]:
     """Return non-blocking warnings for an SFT sample."""
     warnings = []
     hist_len = len(sample.query.conversation_history)
-    if hist_len < 8:
+    _min_recommended: dict[SFTType, int] = {
+        SFTType.diagnostic_recovery: 4,
+        SFTType.backtrack_decision: 6,
+        SFTType.tool_orchestration: 6,
+        SFTType.error_correction: 6,
+    }
+    threshold = _min_recommended.get(sample.sft_type, 8)
+    if hist_len < threshold:
         warnings.append(
             f"Sample {sample.id}: conversation_history has {hist_len} messages "
-            f"(recommended minimum: 8)"
+            f"(recommended minimum for {sample.sft_type.value}: {threshold})"
         )
     return warnings
 
