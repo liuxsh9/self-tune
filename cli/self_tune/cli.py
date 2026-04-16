@@ -160,19 +160,20 @@ def validate():
 @click.option("--format", "fmt", type=click.Choice(["ml2", "sft", "anthropic", "chatml", "jsonl"]), default="ml2")
 @click.option("--output", "-o", type=click.Path(), default="self-tune-export.jsonl")
 @click.option("--min-score", type=float, default=None, help="Minimum quality score filter")
-@click.option("--include-pending", is_flag=True, default=False, help="Include pending (unreviewed) samples")
+@click.option("--approved-only", is_flag=True, default=False, help="Restrict to approved samples only (excludes pending)")
 @click.option("--max-per-type", type=int, default=None, help="Cap per-sft_type count for balanced distribution")
-def export(fmt: str, output: str, min_score: float | None, include_pending: bool, max_per_type: int | None):
+def export(fmt: str, output: str, min_score: float | None, approved_only: bool, max_per_type: int | None):
     """Export SFT training data."""
     store = _store()
     output_path = Path(output)
+    include_pending = not approved_only
     exporters = {"ml2": export_ml2, "sft": export_sft, "anthropic": export_anthropic, "chatml": export_chatml, "jsonl": export_jsonl}
     count = exporters[fmt](store, output_path, min_score=min_score, include_pending=include_pending, max_per_type=max_per_type)
-    if count == 0 and not include_pending:
+    if count == 0 and approved_only:
         total = len(store.list_samples())
         if total > 0:
             console.print(f"[yellow]Note: {total} sample(s) exist but none are approved. "
-                          f"Use --include-pending or run `self-tune review` first.[/yellow]")
+                          f"Remove --approved-only to include pending samples.[/yellow]")
     console.print(f"[green]Exported {count} samples to {output_path} ({fmt} format)[/green]")
 
 

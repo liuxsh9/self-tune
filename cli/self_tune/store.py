@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import tempfile
 from pathlib import Path
 
 from .models import Trace, Insight, SFTSample, Correction
@@ -66,16 +68,16 @@ class SelfTuneStore:
     # --- List ---
 
     def list_traces(self) -> list[Trace]:
-        return [Trace.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "traces").glob("*.json"))]
+        return self._list_dir("traces", Trace)
 
     def list_insights(self) -> list[Insight]:
-        return [Insight.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "insights").glob("*.json"))]
+        return self._list_dir("insights", Insight)
 
     def list_samples(self) -> list[SFTSample]:
-        return [SFTSample.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "samples").glob("*.json"))]
+        return self._list_dir("samples", SFTSample)
 
     def list_corrections(self) -> list[Correction]:
-        return [Correction.model_validate_json(p.read_text()) for p in sorted((self.data_dir / "corrections").glob("*.json"))]
+        return self._list_dir("corrections", Correction)
 
     # --- Stats ---
 
@@ -92,9 +94,26 @@ class SelfTuneStore:
 
     def _save(self, subdir: str, id_: str, model: object) -> Path:
         path = self.data_dir / subdir / f"{id_}.json"
-        path.write_text(model.model_dump_json(indent=2))
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with open(fd, "w") as f:
+                f.write(model.model_dump_json(indent=2))
+            import os
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
         self._update_index()
         return path
+
+    def _list_dir(self, subdir: str, model_cls: type) -> list:
+        results = []
+        for p in sorted((self.data_dir / subdir).glob("*.json")):
+            try:
+                results.append(model_cls.model_validate_json(p.read_text()))
+            except Exception as exc:
+                print(f"Warning: skipping corrupt file {p}: {exc}", file=sys.stderr)
+        return results
 
     def _read(self, subdir: str, id_: str) -> str:
         path = self.data_dir / subdir / f"{id_}.json"

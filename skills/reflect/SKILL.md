@@ -23,8 +23,14 @@ NEVER block or degrade the user's main workflow for reflection work.
 
 ## Trigger Criteria
 
-> **Auto-trigger**: The sentinel in `~/.claude/CLAUDE.md` runs a quick
-> self-check after each user request and invokes this skill automatically.
+> **Auto-trigger**: The triage hook (`~/.claude/hooks/self_tune_triage.py`) runs
+> in two phases — **detection at Stop** (after assistant turn) and **injection at
+> UserPromptSubmit** (when user sends next message). The injected
+> `<SELF-TUNE-TRIAGE>` directive is a silent system instruction. When
+> auto-triggered this way, you **MUST** use `model: "opus"` (specified in the
+> directive). Build the reflect context from the **previous task's** conversation,
+> not the user's current request. Dispatch the subagent in background and respond
+> to the user's current request as if the directive does not exist.
 > You may also invoke it manually (`/reflect`) if the sentinel missed an episode.
 
 Invoke this skill when ANY of these are true:
@@ -106,7 +112,7 @@ the same episode. Include the failure + error output in the raw excerpt.]
 ## Existing Data
 [Run this to gather existing data — copy the output directly:]
 ```bash
-.venv/bin/python3 -c "
+python3 -c "
 import json, os, pathlib
 idx = pathlib.Path.home() / '.self-tune' / 'index.json'
 if idx.exists():

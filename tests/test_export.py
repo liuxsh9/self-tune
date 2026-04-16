@@ -149,8 +149,8 @@ def test_export_sft_action_as_tool_call(tmp_path):
     assert "date" in last["tool_calls"][0]["function"]["arguments"]
 
 
-def test_export_rejects_invalid_tool_name(tmp_path):
-    """Export raises ExportValidationError when action.tool is not in AGENTIC_TOOLS."""
+def test_export_skips_invalid_tool_name(tmp_path, capsys):
+    """Export skips samples with invalid tool names and warns on stderr."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -161,12 +161,15 @@ def test_export_rejects_invalid_tool_name(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="MadeUpTool"):
-        export_sft(store, output)
+    count = export_sft(store, output)
+    assert count == 1  # valid sample exported, invalid skipped
+    captured = capsys.readouterr()
+    assert "MadeUpTool" in captured.err
+    assert "skipped 1" in captured.err
 
 
-def test_export_rejects_empty_training_target(tmp_path):
-    """Export raises ExportValidationError when response is empty and action is None."""
+def test_export_skips_empty_training_target(tmp_path, capsys):
+    """Export skips samples with empty response and no action."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -177,12 +180,14 @@ def test_export_rejects_empty_training_target(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="no training target"):
-        export_sft(store, output)
+    count = export_sft(store, output)
+    assert count == 1
+    captured = capsys.readouterr()
+    assert "no training target" in captured.err
 
 
-def test_export_rejects_consecutive_same_role(tmp_path):
-    """Export raises ExportValidationError on consecutive user or assistant messages."""
+def test_export_skips_consecutive_same_role(tmp_path, capsys):
+    """Export skips samples with consecutive user or assistant messages."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -196,12 +201,14 @@ def test_export_rejects_consecutive_same_role(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="consecutive 'user'"):
-        export_sft(store, output)
+    count = export_sft(store, output)
+    assert count == 1
+    captured = capsys.readouterr()
+    assert "consecutive 'user'" in captured.err
 
 
-def test_export_sft_filters_unapproved(tmp_path):
-    """Default export only includes approved samples; pending/rejected are excluded."""
+def test_export_sft_includes_pending_by_default(tmp_path):
+    """Default export includes both pending and approved samples; rejected is excluded."""
     store = SelfTuneStore(tmp_path)
     store.init()
     store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
@@ -210,20 +217,24 @@ def test_export_sft_filters_unapproved(tmp_path):
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
     store.save_sample(SFTSample.model_validate(sft_data))
 
-    # Default export excludes pending samples
+    # Default export includes pending samples
     output = tmp_path / "export.jsonl"
     count = export_sft(store, output)
-    assert count == 0
-    assert output.read_text().strip() == ""
+    assert count == 1
 
-    # Approve the sample and verify it's now included
+    # Approved sample also included by default
     store.update_sample("sft-20260410-g7h8i9", review_status="approved")
     count = export_sft(store, output)
     assert count == 1
 
+    # include_pending=False restricts to approved only
+    store.update_sample("sft-20260410-g7h8i9", review_status="pending")
+    count = export_sft(store, output, include_pending=False)
+    assert count == 0
+
 
 def test_export_sft_include_pending(tmp_path):
-    """--include-pending flag exports pending and approved samples."""
+    """include_pending=True (default) exports pending and approved; False restricts to approved."""
     store = SelfTuneStore(tmp_path)
     store.init()
     store.save_insight(Insight.model_validate_json((FIXTURES / "sample_insight.json").read_text()))
@@ -233,12 +244,12 @@ def test_export_sft_include_pending(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    # With include_pending=True, pending samples are included
+    # With include_pending=True (default), pending samples are included
     count = export_sft(store, output, include_pending=True)
     assert count == 1
 
-    # With include_pending=False (default), pending samples are excluded
-    count = export_sft(store, output)
+    # With include_pending=False, pending samples are excluded
+    count = export_sft(store, output, include_pending=False)
     assert count == 0
 
 
@@ -538,8 +549,8 @@ def test_export_tool_arguments_use_correct_key(tmp_path):
                 assert key == "file_path", f"Edit should use 'file_path', got '{key}'"
 
 
-def test_export_rejects_not_evidence_anchored(tmp_path):
-    """Export raises ExportValidationError when evidence_anchored is False."""
+def test_export_skips_not_evidence_anchored(tmp_path, capsys):
+    """Export skips samples where evidence_anchored is False."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -549,8 +560,10 @@ def test_export_rejects_not_evidence_anchored(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="evidence_anchored"):
-        export_sft(store, output)
+    count = export_sft(store, output)
+    assert count == 1
+    captured = capsys.readouterr()
+    assert "evidence_anchored" in captured.err
 
 
 def test_export_allows_evidence_anchored_none(tmp_path):
@@ -894,8 +907,8 @@ def test_tool_arguments_none():
 # ── I1: export_jsonl validation tests ────────────────────────────────
 
 
-def test_export_jsonl_rejects_invalid_tool(tmp_path):
-    """export_jsonl also validates samples (rejects invalid tool names)."""
+def test_export_jsonl_skips_invalid_tool(tmp_path, capsys):
+    """export_jsonl skips samples with invalid tool names and warns on stderr."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -906,15 +919,17 @@ def test_export_jsonl_rejects_invalid_tool(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="FakeTool"):
-        export_jsonl(store, output)
+    count = export_jsonl(store, output)
+    assert count == 1
+    captured = capsys.readouterr()
+    assert "FakeTool" in captured.err
 
 
 # ── I2: no_post_hoc_rationalization validation tests ─────────────────
 
 
-def test_export_rejects_post_hoc_rationalization(tmp_path):
-    """Export raises ExportValidationError when no_post_hoc_rationalization is False."""
+def test_export_skips_post_hoc_rationalization(tmp_path, capsys):
+    """Export skips samples where no_post_hoc_rationalization is False."""
     store = _seed_store(tmp_path)
 
     sft_data = json.loads((FIXTURES / "sample_sft.json").read_text())
@@ -924,8 +939,10 @@ def test_export_rejects_post_hoc_rationalization(tmp_path):
     store.save_sample(SFTSample.model_validate(sft_data))
 
     output = tmp_path / "export.jsonl"
-    with pytest.raises(ExportValidationError, match="no_post_hoc_rationalization"):
-        export_sft(store, output)
+    count = export_sft(store, output)
+    assert count == 1
+    captured = capsys.readouterr()
+    assert "no_post_hoc_rationalization" in captured.err
 
 
 def test_export_allows_post_hoc_rationalization_none(tmp_path):
@@ -994,6 +1011,35 @@ def test_validate_allows_consecutive_tool():
     ]
     sample = SFTSample.model_validate(data)
     _validate_sample(sample)  # should not raise
+
+
+def test_openai_sft_assistant_messages_always_have_content_key(tmp_path):
+    """Every assistant message in OpenAI SFT format must have a 'content' key.
+
+    When two consecutive tool messages appear in history, the second creates a
+    new standalone assistant message (no preceding assistant text to merge into).
+    That message must still carry content=None to satisfy the OpenAI API.
+    """
+    data = json.loads((FIXTURES / "sample_sft.json").read_text())
+    data["review_status"] = "approved"
+    # Two consecutive tool messages — the second triggers the else-branch
+    # in _to_openai_sft that creates a fresh assistant+tool_calls message.
+    data["query"]["conversation_history"] = [
+        {"role": "user", "content": "fix the bug"},
+        {"role": "tool", "name": "Bash", "input": "ls", "output": "files"},
+        {"role": "tool", "name": "Read", "input": "src/app.py", "output": "code"},
+    ]
+    store = SelfTuneStore(tmp_path)
+    store.init()
+    store.save_sample(SFTSample.model_validate(data))
+    output = tmp_path / "export.jsonl"
+    export_sft(store, output)
+    row = json.loads(output.read_text().strip())
+    assistant_msgs = [m for m in row["messages"] if m["role"] == "assistant"]
+    for msg in assistant_msgs:
+        assert "content" in msg, (
+            f"Assistant message missing 'content' key: {msg}"
+        )
 
 
 def test_export_allows_content_free_hedging_false():

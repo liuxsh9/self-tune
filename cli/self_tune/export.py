@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -272,7 +273,33 @@ def _warn_sample(sample: SFTSample) -> list[str]:
     return warnings
 
 
-def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
+def _export_loop(samples: list[SFTSample], output: Path, converter) -> int:
+    """Validate and convert samples, skipping invalid ones with a stderr warning.
+
+    Returns the number of successfully exported samples.
+    """
+    skipped: list[tuple[str, str]] = []
+    written = 0
+    with output.open("w") as f:
+        for sample in samples:
+            try:
+                _validate_sample(sample)
+            except ExportValidationError as exc:
+                skipped.append((sample.id, str(exc)))
+                continue
+            example = converter(sample)
+            f.write(json.dumps(example, ensure_ascii=False) + "\n")
+            written += 1
+    if skipped:
+        ids = ", ".join(f"{sid} ({reason})" for sid, reason in skipped)
+        print(
+            f"Warning: skipped {len(skipped)} invalid sample(s): {ids}",
+            file=sys.stderr,
+        )
+    return written
+
+
+def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = True, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in OpenAI chat fine-tuning format (JSONL).
 
     Format follows OpenAI's supervised fine-tuning spec:
@@ -283,26 +310,17 @@ def export_sft(store: SelfTuneStore, output: Path, min_score: Optional[float] = 
     - tools array defining available functions
     """
     samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
-    with output.open("w") as f:
-        for sample in samples:
-            _validate_sample(sample)
-            example = _to_openai_sft(sample)
-            f.write(json.dumps(example, ensure_ascii=False) + "\n")
-    return len(samples)
+    return _export_loop(samples, output, _to_openai_sft)
 
 
 
-def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
+def export_jsonl(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = True, max_per_type: Optional[int] = None) -> int:
     """Export raw SFT sample objects as JSONL."""
     samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
-    with output.open("w") as f:
-        for sample in samples:
-            _validate_sample(sample)
-            f.write(sample.model_dump_json() + "\n")
-    return len(samples)
+    return _export_loop(samples, output, lambda s: json.loads(s.model_dump_json()))
 
 
-def _filter(samples: list[SFTSample], min_score: Optional[float], include_pending: bool = False, max_per_type: Optional[int] = None) -> list[SFTSample]:
+def _filter(samples: list[SFTSample], min_score: Optional[float], include_pending: bool = True, max_per_type: Optional[int] = None) -> list[SFTSample]:
     result = samples
     if include_pending:
         result = [s for s in result if s.review_status in ("approved", "pending")]
@@ -379,6 +397,7 @@ def _to_openai_sft(sample: SFTSample) -> dict:
             else:
                 messages.append({
                     "role": "assistant",
+                    "content": None,
                     "tool_calls": [tool_call],
                     "weight": 0,
                 })
@@ -591,26 +610,16 @@ def _to_chatml_sft(sample: SFTSample) -> dict:
     return {"messages": messages}
 
 
-def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
+def export_anthropic(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = True, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in Anthropic Messages API format (JSONL)."""
     samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
-    with output.open("w") as f:
-        for sample in samples:
-            _validate_sample(sample)
-            example = _to_anthropic_sft(sample)
-            f.write(json.dumps(example, ensure_ascii=False) + "\n")
-    return len(samples)
+    return _export_loop(samples, output, _to_anthropic_sft)
 
 
-def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
+def export_chatml(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = True, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in ChatML format for open-source models (JSONL)."""
     samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
-    with output.open("w") as f:
-        for sample in samples:
-            _validate_sample(sample)
-            example = _to_chatml_sft(sample)
-            f.write(json.dumps(example, ensure_ascii=False) + "\n")
-    return len(samples)
+    return _export_loop(samples, output, _to_chatml_sft)
 
 
 def _to_ml2_sft(sample: SFTSample) -> dict:
@@ -734,12 +743,7 @@ def _to_ml2_sft(sample: SFTSample) -> dict:
     return example
 
 
-def export_ml2(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = False, max_per_type: Optional[int] = None) -> int:
+def export_ml2(store: SelfTuneStore, output: Path, min_score: Optional[float] = None, include_pending: bool = True, max_per_type: Optional[int] = None) -> int:
     """Export SFT samples in extended OpenAI format with reasoning_content (JSONL)."""
     samples = _filter(store.list_samples(), min_score, include_pending, max_per_type)
-    with output.open("w") as f:
-        for sample in samples:
-            _validate_sample(sample)
-            example = _to_ml2_sft(sample)
-            f.write(json.dumps(example, ensure_ascii=False) + "\n")
-    return len(samples)
+    return _export_loop(samples, output, _to_ml2_sft)
